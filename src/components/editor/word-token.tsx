@@ -20,6 +20,8 @@ type WordTokenProps = {
   isJumpTarget?: boolean;
   isUsageExhausted?: boolean;
   isOverLength?: boolean;
+  /** 指摘のない単語について、ユーザーが明示的に言い換え検索を要求した場合に true。 */
+  isParaphraseRequested?: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
   onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
@@ -34,6 +36,7 @@ export function WordToken({
   isJumpTarget = false,
   isUsageExhausted = false,
   isOverLength = false,
+  isParaphraseRequested = false,
   onOpenChange,
   onReplace,
   onConfirmAiTypo,
@@ -42,14 +45,16 @@ export function WordToken({
   const isHighlighted = Boolean(token.rule);
   const isTypoFlagged = Boolean(token.isUnknownWord) || Boolean(token.isAiTypo);
 
-  // ハイライト対象（黄色・赤色）の単語だけをクリック可能にする。
+  // ハイライト対象（黄色・赤色）の単語と、ユーザーが「言い換えを探す」を
+  // 明示的に押した単語だけをクリック可能にする。
   // 指摘のない単語までボタンにしていると、本文中をクリックして
   // カーソルを移動しただけでポップオーバーが開き、解説APIが呼ばれて
   // 利用回数が減ってしまう。素のテキストとして描画しておけば、
   // オーバーレイは pointer-events: none なのでクリックはそのまま
   // 下の textarea に届き、通常どおりカーソル移動になる。
-  if (!isHighlighted && !isTypoFlagged) {
-    return <span>{token.text}</span>;
+  // id は残しておき、言い換えツールチップの表示位置の基準として使う。
+  if (!isHighlighted && !isTypoFlagged && !isParaphraseRequested) {
+    return <span id={`token-${token.start}`}>{token.text}</span>;
   }
 
   function handlePick(replacement: string) {

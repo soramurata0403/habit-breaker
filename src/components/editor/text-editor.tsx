@@ -8,8 +8,9 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
-import { ClipboardPaste, RotateCcw, Sparkles } from "lucide-react";
+import { ClipboardPaste, Lightbulb, RotateCcw, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import {
@@ -104,7 +105,22 @@ export function TextEditor() {
   // サイドパネルの一覧からジャンプしてきた単語トークンの start 位置。
   // 一致するトークンだけ一時的にパルス演出（.animate-issue-jump）を付与する。
   const [jumpTargetId, setJumpTargetId] = useState<number | null>(null);
+  // 本文中で1単語だけが選択されているときに表示する「言い換えを探す」ボタンの位置。
+  // 表示するだけでは通信は発生せず、押されて初めてAPIを呼ぶ。
+  const [paraphrasePrompt, setParaphrasePrompt] = useState<{
+    tokenKey: string;
+    word: string;
+    top: number;
+    left: number;
+    below: boolean;
+  } | null>(null);
+  // ユーザーが「言い換えを探す」を押した単語（トークンの start 位置）。
+  // このトークンだけ、指摘がなくてもポップオーバーを開けるようにする。
+  const [paraphraseTarget, setParaphraseTarget] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // textarea とオーバーレイを含む相対配置のコンテナ。
+  // 言い換えツールチップをこの中に absolute 配置し、ページスクロールに追従させる。
+  const editorBoxRef = useRef<HTMLDivElement>(null);
   const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
   const lastAnalysisAtRef = useRef(0);
@@ -397,6 +413,67 @@ export function TextEditor() {
     }
   }
 
+  /**
+   * textarea 内の選択が変わったときに呼ばれる。
+   * 「1つの単語だけが選択されている」かつ「その単語に指摘が無い」場合にだけ、
+   * 単語の近くに『言い換えを探す』ボタンを出す。ここでは通信は一切行わない。
+   */
+  function handleSelectionChange(event: SyntheticEvent<HTMLTextAreaElement>) {
+    const element = event.currentTarget;
+    const { selectionStart, selectionEnd } = element;
+
+    // 選択が無い（カーソルを置いただけ）場合はボタンを出さない。
+    if (selectionStart === null || selectionEnd === null || selectionStart === selectionEnd) {
+      setParaphrasePrompt(null);
+      return;
+    }
+
+    // 選択範囲が1単語の内側に収まっているときだけ対象にする
+    // （ダブルクリックするとその単語がちょうど選択される）。
+    const token = tokens.find(
+      (candidate): candidate is Extract<Token, { type: "word" }> =>
+        candidate.type === "word" &&
+        candidate.start <= selectionStart &&
+        selectionEnd <= candidate.end,
+    );
+
+    // 黄色・赤色の単語は従来どおりクリックで開けるため、ボタンは出さない。
+    if (!token || token.rule || token.isUnknownWord || token.isAiTypo) {
+      setParaphrasePrompt(null);
+      return;
+    }
+
+    const container = editorBoxRef.current;
+    const wordElement = document.getElementById(`token-${token.start}`);
+    if (!container || !wordElement) {
+      setParaphrasePrompt(null);
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const wordRect = wordElement.getBoundingClientRect();
+    const top = wordRect.top - containerRect.top;
+    // 1行目など上に余白が無い場合は単語の下に出す。
+    const below = top < 44;
+
+    setParaphrasePrompt({
+      tokenKey: token.key,
+      word: token.text,
+      top: below ? top + wordRect.height : top,
+      left: wordRect.left - containerRect.left + wordRect.width / 2,
+      below,
+    });
+  }
+
+  /** 『言い換えを探す』ボタンが押されたときだけ、その単語の解説を取りに行く。 */
+  function handleRequestParaphrase() {
+    if (!paraphrasePrompt) return;
+    const start = Number(paraphrasePrompt.tokenKey.slice(2));
+    setParaphraseTarget(start);
+    setActiveKey(paraphrasePrompt.tokenKey);
+    setParaphrasePrompt(null);
+  }
+
   function handleClear() {
     setText("");
     recordCommit("", 0, 0);
@@ -447,7 +524,12 @@ export function TextEditor() {
         isJumpTarget={jumpTargetId === token.start}
         isUsageExhausted={isExhausted}
         isOverLength={isOverLength}
-        onOpenChange={(open) => setActiveKey(open ? token.key : null)}
+        isParaphraseRequested={paraphraseTarget === token.start}
+        onOpenChange={(open) => {
+          setActiveKey(open ? token.key : null);
+          // 閉じたら、指摘のない単語は元の「クリックできない素のテキスト」に戻す。
+          if (!open && paraphraseTarget === token.start) setParaphraseTarget(null);
+        }}
         onReplace={handleReplace}
         onConfirmAiTypo={handleConfirmAiTypo}
         onConfirmVaguePronoun={handleConfirmVaguePronoun}
@@ -497,6 +579,10 @@ export function TextEditor() {
               <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
               赤色：スペルミスの疑い
             </span>
+            <span className="flex items-center gap-1.5 text-neutral-400">
+              <Lightbulb className="h-3.5 w-3.5" />
+              単語をダブルクリックすると言い換えを探せます
+            </span>
           </p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" onClick={handleSample}>
@@ -526,7 +612,7 @@ export function TextEditor() {
           </p>
         )}
 
-        <div className="relative">
+        <div className="relative" ref={editorBoxRef}>
           <textarea
             ref={textareaRef}
             value={text}
@@ -535,7 +621,11 @@ export function TextEditor() {
               setText(element.value);
               recordTyping(element.value, element.selectionStart, element.selectionEnd);
               setActiveKey(null);
+              // 本文が変わると単語の位置がずれるため、言い換えの状態は一旦解除する。
+              setParaphrasePrompt(null);
+              setParaphraseTarget(null);
             }}
+            onSelect={handleSelectionChange}
             onKeyDown={handleUndoRedoKeyDown}
             placeholder="ここに英文を入力または貼り付けしてください..."
             spellCheck={false}
@@ -552,6 +642,26 @@ export function TextEditor() {
           >
             {text.length > 0 && renderTokenNodes()}
           </div>
+
+          {paraphrasePrompt && (
+            <button
+              type="button"
+              // mousedown の既定動作を止めて textarea の選択を保ったまま
+              // クリックを受け取る（選択が消えると位置の基準を失うため）。
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={handleRequestParaphrase}
+              className={cn(
+                "animate-popover absolute z-30 flex -translate-x-1/2 items-center gap-1 rounded-full",
+                "border border-teal-200 bg-white px-3 py-1.5 text-xs font-medium text-teal-700",
+                "shadow-lg transition-colors hover:border-teal-300 hover:bg-teal-50",
+                paraphrasePrompt.below ? "translate-y-2" : "-translate-y-[calc(100%+8px)]",
+              )}
+              style={{ top: paraphrasePrompt.top, left: paraphrasePrompt.left }}
+            >
+              <Lightbulb className="h-3.5 w-3.5" />
+              「{paraphrasePrompt.word}」の言い換えを探す
+            </button>
+          )}
         </div>
 
         {isOverLength && (
