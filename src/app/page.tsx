@@ -12,12 +12,13 @@ export default function Home() {
             <BookOpenCheck className="h-4 w-4" />
             HabitBreaker English
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
-            日本人学習者特有の「英語の癖」を可視化する
+          <h1 className="text-balance break-keep text-[clamp(1.375rem,6.5vw,2.25rem)] font-bold tracking-tight text-neutral-900 sm:text-4xl">
+            ネイティブのような文章へ。
           </h1>
-          <p className="mx-auto mt-3 max-w-xl text-balance text-neutral-500">
-            TOEFL / IELTS ライティング向けエディタ。ハイライトされた単語をクリックすると、
-            コーパスデータに基づく解説とパラフレーズ候補が表示され、ワンクリックで置き換えられます。
+          <p className="mx-auto mt-3 max-w-xl text-neutral-500">
+            TOEFL / IELTS ライティング向けエディタ。
+            <br />
+            ハイライトされた単語をクリックすると、コーパスデータに基づく解説とパラフレーズ候補が表示され、ワンクリックで置き換えられます。
           </p>
         </header>
 

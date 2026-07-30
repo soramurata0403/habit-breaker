@@ -12,7 +12,7 @@ export type Token =
       text: string;
       start: number;
       end: number;
-      rule: HabitRule;
+      rule?: HabitRule;
     };
 
 export function tokenize(text: string): Token[] {
@@ -34,12 +34,14 @@ export function tokenize(text: string): Token[] {
       });
     }
 
-    const rule = habitRuleMap.get(word.toLowerCase());
-    tokens.push(
-      rule
-        ? { type: "word", key: `w-${start}`, text: word, start, end, rule }
-        : { type: "text", key: `t-${start}`, text: word },
-    );
+    tokens.push({
+      type: "word",
+      key: `w-${start}`,
+      text: word,
+      start,
+      end,
+      rule: habitRuleMap.get(word.toLowerCase()),
+    });
 
     lastIndex = end;
   }
@@ -53,6 +55,33 @@ export function tokenize(text: string): Token[] {
   }
 
   return tokens;
+}
+
+const MAX_CONTEXT_LENGTH = 500;
+
+/**
+ * `position` を含む一文を、文末記号（. ! ?）を区切りとして抽出する。
+ * 文境界が見つからない場合はテキスト全体（上限あり）を返す。
+ */
+export function getContextSentence(text: string, position: number): string {
+  const trimmedFull = text.trim();
+  if (!trimmedFull) return "";
+
+  const boundaryPattern = /[.!?](?:\s+|$)/g;
+  let sentenceStart = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = boundaryPattern.exec(text)) !== null) {
+    const sentenceEnd = match.index + match[0].length;
+    if (position < sentenceEnd) {
+      const sentence = text.slice(sentenceStart, sentenceEnd).trim();
+      return (sentence || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
+    }
+    sentenceStart = sentenceEnd;
+  }
+
+  const remainder = text.slice(sentenceStart).trim();
+  return (remainder || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
 }
 
 export function matchCase(source: string, target: string): string {
