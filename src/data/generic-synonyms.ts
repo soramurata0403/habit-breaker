@@ -6,41 +6,6 @@ import type { Suggestion } from "./habit-rules";
  * 外部の類語辞書API・LLMを呼び出す想定（src/lib/word-insight.ts 参照）。
  */
 export const genericSynonyms: Record<string, Suggestion[]> = {
-  good: [
-    { word: "beneficial", nuance: "利益や効果の観点で良い" },
-    { word: "favorable", nuance: "状況や条件が好ましい" },
-    { word: "excellent", nuance: "非常に優れている" },
-  ],
-  big: [
-    { word: "substantial", nuance: "量や規模が相当な" },
-    { word: "considerable", nuance: "無視できないほど大きい" },
-    { word: "significant", nuance: "重要な意味を持つほど大きい" },
-  ],
-  small: [
-    { word: "minor", nuance: "重要度や規模が小さい" },
-    { word: "negligible", nuance: "無視できるほど小さい" },
-    { word: "modest", nuance: "控えめな規模の" },
-  ],
-  important: [
-    { word: "crucial", nuance: "決定的に重要な" },
-    { word: "essential", nuance: "不可欠な" },
-    { word: "significant", nuance: "意義が大きい" },
-  ],
-  get: [
-    { word: "obtain", nuance: "努力して手に入れる（フォーマル）" },
-    { word: "acquire", nuance: "獲得する（フォーマル）" },
-    { word: "receive", nuance: "受け取る" },
-  ],
-  make: [
-    { word: "create", nuance: "新たに作り出す" },
-    { word: "produce", nuance: "生産・生成する" },
-    { word: "generate", nuance: "（結果などを）生み出す" },
-  ],
-  very: [
-    { word: "extremely", nuance: "極めて（強調）" },
-    { word: "remarkably", nuance: "著しく" },
-    { word: "considerably", nuance: "かなり" },
-  ],
   happy: [
     { word: "content", nuance: "満ち足りた" },
     { word: "pleased", nuance: "喜んでいる" },
@@ -66,11 +31,6 @@ export const genericSynonyms: Record<string, Suggestion[]> = {
     { word: "employ", nuance: "手段として用いる" },
     { word: "apply", nuance: "適用する" },
   ],
-  problem: [
-    { word: "issue", nuance: "議論すべき問題" },
-    { word: "challenge", nuance: "取り組むべき課題" },
-    { word: "obstacle", nuance: "障害となるもの" },
-  ],
   change: [
     { word: "alter", nuance: "部分的に変更する" },
     { word: "modify", nuance: "調整・修正する" },
@@ -85,11 +45,6 @@ export const genericSynonyms: Record<string, Suggestion[]> = {
     { word: "challenging", nuance: "やりがいのある困難さ" },
     { word: "demanding", nuance: "多くの労力を要する" },
     { word: "complex", nuance: "複雑な" },
-  ],
-  many: [
-    { word: "numerous", nuance: "数多くの（フォーマル）" },
-    { word: "considerable", nuance: "かなりの数の" },
-    { word: "plentiful", nuance: "豊富にある" },
   ],
   said: [
     { word: "stated", nuance: "公式に述べた" },
@@ -130,11 +85,6 @@ export const genericSynonyms: Record<string, Suggestion[]> = {
     { word: "remarkable", nuance: "際立って優れた" },
     { word: "outstanding", nuance: "傑出した" },
     { word: "exceptional", nuance: "並外れた" },
-  ],
-  thing: [
-    { word: "aspect", nuance: "物事の一側面" },
-    { word: "factor", nuance: "要因" },
-    { word: "element", nuance: "構成要素" },
   ],
 };
 

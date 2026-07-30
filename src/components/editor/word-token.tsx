@@ -143,27 +143,6 @@ function DynamicInsight({
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-    const contextSentence = getContextSentence(fullText, start);
-    fetchWordInsight(word, contextSentence).then((result) => {
-      if (cancelled) return;
-      // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
-      // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。
-      if (isTypoFlagged && result.source === "unknown") return;
-      setInsight(result);
-      // クリックして初めてAIが isTypo: true と判定した単語も、以後は
-      // 文章全体でリアルタイムに赤ハイライト・件数へ反映されるようにする。
-      if (result.isTypo && result.suggestedSpelling) {
-        onConfirmAiTypo(word, result.suggestedSpelling, result.insight);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, word, start, fullText, isTypoFlagged, onConfirmAiTypo]);
-
   // 事前スキャン・過去のクリックでAIが文脈的な誤りだと確認済みの場合は、
   // それを最優先の即時表示として使う（辞書に無い語の編集距離ベースの
   // 推測よりも、実際にAIが確認した候補の方が信頼できるため）。
@@ -187,6 +166,55 @@ function DynamicInsight({
     }
     return null;
   }, [isAiTypo, aiSuggestedSpelling, aiExplanation, isTypoFlagged, dictionary, word]);
+
+  // 既にタイポ確定済み（instantFallback.isTypo）の場合に、後から届く
+  // /api/word-insight の応答だけを信頼してその判定を破棄・上書きしない
+  // ようにするための値。LLMの応答は同じ単語・文脈でも毎回完全に同じとは
+  // 限らず、後続の呼び出しが「タイポではない」と揺れて返ることがある。
+  const confirmedSuggestedSpelling = instantFallback?.isTypo
+    ? instantFallback.suggestedSpelling
+    : undefined;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const contextSentence = getContextSentence(fullText, start);
+    fetchWordInsight(word, contextSentence).then((result) => {
+      if (cancelled) return;
+      // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
+      // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。
+      if (isTypoFlagged && result.source === "unknown") return;
+
+      // 既にタイポと確定済みなのに、今回の応答がそれを否定した場合は、
+      // 解説・言い換え候補は新しい内容を採用しつつ、タイポの警告バナーは
+      // 維持する（結合）。ユーザーが修正するか閉じるまで消さないため。
+      const shouldPreserveConfirmedTypo =
+        Boolean(confirmedSuggestedSpelling) && !result.isTypo;
+
+      setInsight(
+        shouldPreserveConfirmedTypo
+          ? { ...result, isTypo: true, suggestedSpelling: confirmedSuggestedSpelling }
+          : result,
+      );
+
+      // クリックして初めてAIが isTypo: true と判定した単語も、以後は
+      // 文章全体でリアルタイムに赤ハイライト・件数へ反映されるようにする。
+      if (result.isTypo && result.suggestedSpelling) {
+        onConfirmAiTypo(word, result.suggestedSpelling, result.insight);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isOpen,
+    word,
+    start,
+    fullText,
+    isTypoFlagged,
+    onConfirmAiTypo,
+    confirmedSuggestedSpelling,
+  ]);
 
   const resolved =
     insight && insight.word === word.toLowerCase() ? insight : instantFallback;

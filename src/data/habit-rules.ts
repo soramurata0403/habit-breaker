@@ -50,10 +50,189 @@ export const habitRules: HabitRule[] = [
       { word: "consequently", nuance: "結果に伴って" },
     ],
   },
+  {
+    word: "important",
+    insight:
+      "importantは便利な万能語ですが、具体性に欠けるため日本人学習者に多用されがちです。重要性の種類に応じてより精密な語に言い換えましょう。",
+    suggestions: [
+      { word: "crucial", nuance: "決定的に重要な" },
+      { word: "essential", nuance: "不可欠な" },
+      { word: "significant", nuance: "意義が大きい" },
+    ],
+  },
+  {
+    word: "good",
+    insight:
+      "goodは日本語の「良い」をそのまま当てはめがちな典型的な万能形容詞です。ネイティブは文脈に応じてより具体的な評価語を使います。",
+    suggestions: [
+      { word: "beneficial", nuance: "利益や効果の観点で良い" },
+      { word: "favorable", nuance: "状況や条件が好ましい" },
+      { word: "excellent", nuance: "非常に優れている" },
+    ],
+  },
+  {
+    word: "nice",
+    insight:
+      "niceは口語的で漠然とした印象を与えるため、アカデミックライティングでは避けられがちです。具体的な性質を表す語に言い換えましょう。",
+    suggestions: [
+      { word: "pleasant", nuance: "心地よい" },
+      { word: "agreeable", nuance: "好ましい・同意しやすい" },
+      { word: "delightful", nuance: "非常に喜ばしい" },
+    ],
+  },
+  {
+    word: "big",
+    insight:
+      "bigは規模を表す基本語ですが、フォーマルな文章では抽象的すぎると判断されがちです。程度に応じた語へ言い換えましょう。",
+    suggestions: [
+      { word: "substantial", nuance: "量や規模が相当な" },
+      { word: "considerable", nuance: "無視できないほど大きい" },
+      { word: "significant", nuance: "重要な意味を持つほど大きい" },
+    ],
+  },
+  {
+    word: "small",
+    insight:
+      "smallも同様に規模・程度を漠然と表す基本語です。より精密な語に言い換えると説得力が増します。",
+    suggestions: [
+      { word: "minor", nuance: "重要度や規模が小さい" },
+      { word: "negligible", nuance: "無視できるほど小さい" },
+      { word: "modest", nuance: "控えめな規模の" },
+    ],
+  },
+  {
+    word: "useful",
+    insight:
+      "usefulは便利ですが漠然とした語で、具体的にどう役立つのかを示す語の方が説得力が増します。",
+    suggestions: [
+      { word: "beneficial", nuance: "利益をもたらす" },
+      { word: "practical", nuance: "実用的な" },
+      { word: "valuable", nuance: "価値のある" },
+    ],
+  },
+  {
+    word: "convenient",
+    insight:
+      "convenientは日常会話的な響きが強く、エッセイではより硬い語彙への言い換えが好まれます。",
+    suggestions: [
+      { word: "practical", nuance: "実用面で都合が良い" },
+      { word: "accessible", nuance: "利用しやすい" },
+      { word: "efficient", nuance: "効率的な" },
+    ],
+  },
+  {
+    word: "many",
+    insight:
+      "manyは基本的な数量表現ですが、フォーマルな文章ではより具体的・強調的な語が好まれます。",
+    suggestions: [
+      { word: "numerous", nuance: "数多くの（フォーマル）" },
+      { word: "considerable", nuance: "かなりの数の" },
+      { word: "plentiful", nuance: "豊富にある" },
+    ],
+  },
+  {
+    word: "a lot of",
+    insight:
+      "a lot ofは口語的な量表現の典型で、エッセイではより硬い語に置き換えるべきとされます。",
+    suggestions: [
+      { word: "numerous", nuance: "数多くの" },
+      { word: "a great deal of", nuance: "かなりの量の" },
+      { word: "substantial", nuance: "相当な量の" },
+    ],
+  },
+  {
+    word: "very",
+    insight:
+      "veryは強調のために多用されがちですが、単調な印象を与えます。それ自体で強い意味を持つ語に言い換えましょう。",
+    suggestions: [
+      { word: "extremely", nuance: "極めて（強調）" },
+      { word: "remarkably", nuance: "著しく" },
+      { word: "particularly", nuance: "特に" },
+    ],
+  },
+  {
+    word: "thing",
+    insight:
+      "thingは対象を曖昧にしてしまう典型的な万能名詞です。具体的に何を指しているかを表す語に言い換えましょう。",
+    suggestions: [
+      { word: "aspect", nuance: "物事の一側面" },
+      { word: "factor", nuance: "要因" },
+      { word: "element", nuance: "構成要素" },
+    ],
+  },
+  {
+    word: "problem",
+    insight:
+      "problemは頻出する基本語ですが、問題の性質に応じてより的確な語を選ぶと説得力が増します。",
+    suggestions: [
+      { word: "issue", nuance: "議論すべき問題" },
+      { word: "challenge", nuance: "取り組むべき課題" },
+      { word: "obstacle", nuance: "障害となるもの" },
+    ],
+  },
+  {
+    word: "make",
+    insight:
+      "makeは汎用性が高い分、具体性に欠ける動詞です。何を作る・生じさせるのかに応じて動詞を使い分けましょう。",
+    suggestions: [
+      { word: "create", nuance: "新たに作り出す" },
+      { word: "produce", nuance: "生産・生成する" },
+      { word: "generate", nuance: "（結果などを）生み出す" },
+    ],
+  },
+  {
+    word: "get",
+    insight:
+      "getは口語で多用される動詞で、フォーマルな文章ではより正確な動詞への言い換えが好まれます。",
+    suggestions: [
+      { word: "obtain", nuance: "努力して手に入れる（フォーマル）" },
+      { word: "acquire", nuance: "獲得する（フォーマル）" },
+      { word: "receive", nuance: "受け取る" },
+    ],
+  },
+  {
+    word: "have",
+    insight:
+      "haveは所有・状態を表す基本動詞ですが、多用すると単調になります。文脈に応じてより具体的な動詞に言い換えましょう。",
+    suggestions: [
+      { word: "possess", nuance: "所有する（フォーマル）" },
+      { word: "experience", nuance: "経験する" },
+      { word: "hold", nuance: "保持する" },
+    ],
+  },
+  {
+    word: "in my opinion",
+    insight:
+      "in my opinionは意見を述べる定型表現ですが、多用するとエッセイの客観性・論理性を弱めてしまいます。",
+    suggestions: [
+      { word: "arguably", nuance: "議論の余地はあるが（硬い表現）" },
+      { word: "it could be argued that", nuance: "〜と主張できる" },
+      { word: "from my perspective", nuance: "私の視点からは" },
+    ],
+  },
+  {
+    word: "i believe",
+    insight:
+      "I believeも主観的な意見表明の定型句で、多用するとエッセイの客観性・論理性を弱めてしまいます。",
+    suggestions: [
+      { word: "argue", nuance: "根拠を挙げて主張する" },
+      { word: "contend", nuance: "強く主張する" },
+      { word: "maintain", nuance: "一貫して主張する" },
+    ],
+  },
 ];
 
+// 単語1語のルール（トークナイザが単語ごとに参照する）。
 export const habitRuleMap: Map<string, HabitRule> = new Map(
-  habitRules.map((rule) => [rule.word.toLowerCase(), rule]),
+  habitRules
+    .filter((rule) => !rule.word.includes(" "))
+    .map((rule) => [rule.word.toLowerCase(), rule]),
+);
+
+// 複数語からなる定型フレーズのルール（"in my opinion" 等）。
+// トークナイザが文章全体からフレーズ単位で検出する際に参照する。
+export const phraseHabitRules: HabitRule[] = habitRules.filter((rule) =>
+  rule.word.includes(" "),
 );
 
 export const SAMPLE_TEXT =

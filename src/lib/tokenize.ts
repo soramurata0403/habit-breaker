@@ -1,4 +1,4 @@
-import { habitRuleMap, type HabitRule } from "@/data/habit-rules";
+import { habitRuleMap, phraseHabitRules, type HabitRule } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
 
 export type AiTypoInfo = {
@@ -26,24 +26,106 @@ export type Token =
     };
 
 const SENTENCE_END_PATTERN = /[.!?]/;
+const WORD_PATTERN = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+
+type Span = { start: number; end: number; text: string; rule?: HabitRule };
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 各フレーズルールについて、単語間の空白量に多少の揺れがあっても
+// マッチできるよう `\s+` で区切った上で単語境界付きの正規表現を作る。
+const phrasePatterns = phraseHabitRules.map((rule) => ({
+  rule,
+  pattern: new RegExp(`\\b${rule.word.split(/\s+/).map(escapeRegExp).join("\\s+")}\\b`, "gi"),
+}));
+
+/**
+ * 定型フレーズ（"in my opinion" 等）の出現箇所を文章全体から検出する。
+ * フレーズ同士が重なる場合は、開始位置が早く・長い方を優先して残す。
+ */
+function findPhraseSpans(text: string): Span[] {
+  if (phrasePatterns.length === 0) return [];
+
+  const rawMatches: Span[] = [];
+  for (const { rule, pattern } of phrasePatterns) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text)) !== null) {
+      rawMatches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        text: match[0],
+        rule,
+      });
+    }
+  }
+
+  rawMatches.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+
+  const accepted: Span[] = [];
+  let lastEnd = -1;
+  for (const span of rawMatches) {
+    if (span.start >= lastEnd) {
+      accepted.push(span);
+      lastEnd = span.end;
+    }
+  }
+  return accepted;
+}
 
 export function tokenize(text: string, dictionary?: Set<string> | null): Token[] {
   const tokens: Token[] = [];
-  const wordPattern = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+  const phraseSpans = findPhraseSpans(text);
+  let phraseIndex = 0;
+
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let atSentenceStart = true;
+  WORD_PATTERN.lastIndex = 0;
 
-  while ((match = wordPattern.exec(text)) !== null) {
+  function flushGap(upTo: number) {
+    if (upTo > lastIndex) {
+      const gap = text.slice(lastIndex, upTo);
+      tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
+      if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
+    }
+  }
+
+  while ((match = WORD_PATTERN.exec(text)) !== null) {
     const word = match[0];
     const start = match.index;
     const end = start + word.length;
 
-    if (start > lastIndex) {
-      const gap = text.slice(lastIndex, start);
-      tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
-      if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
+    // 直前に出力したフレーズトークンの内側にある単語（2語目以降）は、
+    // 既に1つのトークンとして出力済みなので個別には処理しない。
+    if (start < lastIndex) continue;
+
+    // 現在位置より前で終わっているフレーズ候補は読み飛ばす。
+    while (phraseIndex < phraseSpans.length && phraseSpans[phraseIndex].end <= start) {
+      phraseIndex++;
     }
+
+    const phrase = phraseSpans[phraseIndex];
+    if (phrase && start === phrase.start) {
+      // フレーズの先頭単語に到達したので、フレーズ全体を1トークンとして出力する。
+      flushGap(phrase.start);
+      tokens.push({
+        type: "word",
+        key: `p-${phrase.start}`,
+        text: phrase.text,
+        start: phrase.start,
+        end: phrase.end,
+        rule: phrase.rule,
+        isUnknownWord: false,
+      });
+      lastIndex = phrase.end;
+      atSentenceStart = false;
+      continue;
+    }
+
+    flushGap(start);
 
     const rule = habitRuleMap.get(word.toLowerCase());
     tokens.push({
