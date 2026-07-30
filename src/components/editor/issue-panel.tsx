@@ -83,6 +83,9 @@ export function IssuePanel({
               <li key={item.id}>
                 <button
                   type="button"
+                  // 開いているポップオーバーの「外側クリック」判定から除外する
+                  // （一覧から一覧へ、1クリックで切り替えられるようにするため）。
+                  data-issue-row=""
                   onClick={() => onSelectIssue(item.id, item.tokenKey)}
                   className="w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-left transition-colors hover:border-teal-300 hover:bg-teal-50"
                 >

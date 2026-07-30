@@ -40,12 +40,29 @@ export function WordToken({
     onReplace(token.start, token.end, matchCase(token.text, replacement));
   }
 
+  // 他のハイライト単語やサイドパネルの一覧項目をクリックした場合は、
+  // Radix 既定の「外側クリックで閉じる」処理を抑止する。
+  // 抑止しないと pointerdown で先にこのポップオーバーが閉じられ、
+  // 続く click での切り替えと競合して「1回目は閉じるだけ」になってしまう。
+  // 抑止した場合でも、切り替え先が activeKey を書き換えることで
+  // このポップオーバーは自動的に閉じるため、開きっぱなしにはならない。
+  function handleInteractOutside(event: { detail: { originalEvent: Event }; preventDefault: () => void }) {
+    const target = event.detail.originalEvent.target;
+    if (target instanceof Element && target.closest("[data-word-token], [data-issue-row]")) {
+      event.preventDefault();
+    }
+  }
+
   return (
     <Popover.Root open={isOpen} onOpenChange={onOpenChange}>
       <Popover.Trigger asChild>
         <button
           type="button"
           id={`token-${token.start}`}
+          // 開いているポップオーバーの「外側クリック」判定から除外するための目印。
+          // これが無いと、別のハイライト単語を押した時に「閉じる」だけが先に
+          // 走ってしまい、切り替えに2クリック必要になる。
+          data-word-token=""
           className={cn(
             // padding/margin/border は一切持たせない: textarea 側の文字幅と
             // 完全に一致させるため（背景色・ring は box-shadow ベースでレイアウトに影響しない）。
@@ -73,8 +90,13 @@ export function WordToken({
         <Popover.Content
           side="bottom"
           align="start"
-          sideOffset={10}
+          // 選択中の単語と重ならないよう、単語の直下に12pxの余白を空けて配置する。
+          sideOffset={12}
+          // 画面端に近い単語では自動的に上下を反転（フリップ）させ、
+          // ポップオーバーが画面外にはみ出さないようにする。
+          avoidCollisions
           collisionPadding={16}
+          onInteractOutside={handleInteractOutside}
           className="animate-popover z-50 w-[21rem] rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-xl focus:outline-none"
         >
           {token.rule ? (

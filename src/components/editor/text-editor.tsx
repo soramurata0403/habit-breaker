@@ -306,10 +306,9 @@ export function TextEditor() {
       block: "center",
     });
 
-    // このクリック（pointerdown → click）が Radix の「外側クリック」
-    // として拾われ、開いた直後に閉じてしまうのを避けるため、
-    // ポップオーバーを開くのは現在のイベント処理が終わってから行う。
-    requestAnimationFrame(() => setActiveKey(tokenKey));
+    // 一覧項目は data-issue-row で「外側クリック」判定から除外しているため、
+    // 開いているポップオーバーに閉じられることなく、そのまま切り替えられる。
+    setActiveKey(tokenKey);
 
     if (jumpTimeoutRef.current) clearTimeout(jumpTimeoutRef.current);
     jumpTimeoutRef.current = setTimeout(() => {
