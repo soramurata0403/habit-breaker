@@ -249,7 +249,7 @@ function DynamicInsight({
     return (
       <div className="flex items-center gap-2 py-6 text-sm text-neutral-400">
         <Loader2 className="h-4 w-4 animate-spin" />
-        AIが文脈を解析中...
+        文脈を解析中...
       </div>
     );
   }
