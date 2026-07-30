@@ -23,8 +23,14 @@ import {
 import { SAMPLE_TEXT, contextualPronouns } from "@/data/habit-rules";
 import { loadDictionary } from "@/lib/spellcheck";
 import { checkPronounContext, scanTextForContextualTypos } from "@/lib/word-insight";
+import { buildIssueItems } from "@/lib/issue-list";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
+import { IssuePanel, type IssuePanelTab } from "./issue-panel";
+
+// サイドパネルからのジャンプ後、対象単語のパルス演出をどれだけ表示し
+// 続けるか。globals.css の .animate-issue-jump の総再生時間と揃える。
+const JUMP_HIGHLIGHT_DURATION_MS = 1600;
 
 const MIN_HEIGHT = 224;
 
@@ -67,7 +73,20 @@ export function TextEditor() {
     text: "",
     starts: new Set(),
   });
+  // サイドパネルの開閉状態。null は閉じている状態を表し、下部の
+  // ステータスボタンを押したタイミングで対応するタブが開く。
+  const [activePanel, setActivePanel] = useState<IssuePanelTab | null>(null);
+  // サイドパネルの一覧からジャンプしてきた単語トークンの start 位置。
+  // 一致するトークンだけ一時的にパルス演出（.animate-issue-jump）を付与する。
+  const [jumpTargetId, setJumpTargetId] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (jumpTimeoutRef.current) clearTimeout(jumpTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,17 +204,12 @@ export function TextEditor() {
     const withTypos = applyAiTypoFlags(base, aiTypos);
     return applyPronounContextFlags(withTypos, vagueStarts);
   }, [text, spellcheckDictionary, aiTypos, vagueStarts]);
-  const highlightCount = useMemo(
-    () => tokens.filter((token) => token.type === "word" && token.rule).length,
+  const { improvements: improvementItems, spelling: spellingItems } = useMemo(
+    () => buildIssueItems(tokens),
     [tokens],
   );
-  const typoCount = useMemo(
-    () =>
-      tokens.filter(
-        (token) => token.type === "word" && (token.isUnknownWord || token.isAiTypo),
-      ).length,
-    [tokens],
-  );
+  const highlightCount = improvementItems.length;
+  const typoCount = spellingItems.length;
 
   useLayoutEffect(() => {
     const el = textareaRef.current;
@@ -270,6 +284,32 @@ export function TextEditor() {
     textareaRef.current?.focus();
   }
 
+  // 下部のステータスボタン（改善ポイント／スペルミス）を押した時の開閉処理。
+  // パネルが閉じている場合は該当タブで開き、既に同じタブが開いている場合は
+  // 閉じる。別のタブが開いている場合はそのタブへ切り替える。
+  function handleStatusButtonClick(panel: IssuePanelTab) {
+    setActivePanel((prev) => (prev === panel ? null : panel));
+  }
+
+  function handleClosePanel() {
+    setActivePanel(null);
+  }
+
+  // サイドパネルの一覧項目をクリックした時、本文中の該当単語まで
+  // スムーズスクロールし、一時的にパルス演出でハイライトする。
+  const handleSelectIssue = useCallback((id: number) => {
+    setJumpTargetId(id);
+    document.getElementById(`token-${id}`)?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+
+    if (jumpTimeoutRef.current) clearTimeout(jumpTimeoutRef.current);
+    jumpTimeoutRef.current = setTimeout(() => {
+      setJumpTargetId(null);
+    }, JUMP_HIGHLIGHT_DURATION_MS);
+  }, []);
+
   function renderWordToken(token: Extract<Token, { type: "word" }>) {
     return (
       <WordToken
@@ -278,6 +318,7 @@ export function TextEditor() {
         fullText={text}
         dictionary={dictionary}
         isOpen={activeKey === token.key}
+        isJumpTarget={jumpTargetId === token.start}
         onOpenChange={(open) => setActiveKey(open ? token.key : null)}
         onReplace={handleReplace}
         onConfirmAiTypo={handleConfirmAiTypo}
@@ -314,98 +355,121 @@ export function TextEditor() {
   }
 
   return (
-    <div className="w-full">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-            黄色：言い換え推奨の癖のある単語
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-            赤色：スペルミスの疑い
-          </span>
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" onClick={handleSample}>
-            <Sparkles className="h-4 w-4" />
-            サンプル文章をセット
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={handlePaste}
-            disabled={isPasting}
+    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
+      <div className="min-w-0 flex-1">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+              黄色：言い換え推奨の癖のある単語
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+              赤色：スペルミスの疑い
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={handleSample}>
+              <Sparkles className="h-4 w-4" />
+              サンプル文章をセット
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={handlePaste}
+              disabled={isPasting}
+            >
+              <ClipboardPaste className="h-4 w-4" />
+              {isPasting ? "貼り付け中..." : "貼り付け"}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={handleClear}>
+              <RotateCcw className="h-4 w-4" />
+              クリア
+            </Button>
+          </div>
+        </div>
+
+        {pasteError && (
+          <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {pasteError}
+          </p>
+        )}
+
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(event) => {
+              setText(event.target.value);
+              setActiveKey(null);
+            }}
+            placeholder="ここに英文を入力または貼り付けしてください..."
+            spellCheck={false}
+            className={cn(
+              SHARED_BOX_CLASSES,
+              "relative z-0 resize-none overflow-hidden border-neutral-200 bg-white text-transparent caret-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-teal-400 focus:ring-4 focus:ring-teal-100",
+            )}
+          />
+          <div
+            className={cn(
+              SHARED_BOX_CLASSES,
+              "pointer-events-none absolute inset-0 z-10 border-transparent text-neutral-800",
+            )}
           >
-            <ClipboardPaste className="h-4 w-4" />
-            {isPasting ? "貼り付け中..." : "貼り付け"}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onClick={handleClear}>
-            <RotateCcw className="h-4 w-4" />
-            クリア
-          </Button>
+            {text.length > 0 && renderTokenNodes()}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <span className="text-sm font-medium whitespace-nowrap text-neutral-600">
+            {text.length} 文字
+          </span>
+          <span className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => handleStatusButtonClick("improvements")}
+              aria-pressed={activePanel === "improvements"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors",
+                highlightCount > 0
+                  ? "bg-amber-100 text-amber-900 hover:bg-amber-200"
+                  : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200",
+                activePanel === "improvements" && "ring-2 ring-amber-400",
+              )}
+            >
+              <span className="text-base font-bold">{highlightCount}</span>
+              件の改善ポイント
+            </button>
+            <button
+              type="button"
+              onClick={() => handleStatusButtonClick("spelling")}
+              aria-pressed={activePanel === "spelling"}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors",
+                typoCount > 0
+                  ? "bg-red-100 text-red-900 hover:bg-red-200"
+                  : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200",
+                activePanel === "spelling" && "ring-2 ring-red-400",
+              )}
+            >
+              <span className="text-base font-bold">{typoCount}</span>
+              件のスペルミスの疑い
+            </button>
+          </span>
         </div>
       </div>
 
-      {pasteError && (
-        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {pasteError}
-        </p>
-      )}
-
-      <div className="relative">
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(event) => {
-            setText(event.target.value);
-            setActiveKey(null);
-          }}
-          placeholder="ここに英文を入力または貼り付けしてください..."
-          spellCheck={false}
-          className={cn(
-            SHARED_BOX_CLASSES,
-            "relative z-0 resize-none overflow-hidden border-neutral-200 bg-white text-transparent caret-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-teal-400 focus:ring-4 focus:ring-teal-100",
-          )}
+      {activePanel && (
+        <IssuePanel
+          activeTab={activePanel}
+          onTabChange={setActivePanel}
+          onClose={handleClosePanel}
+          improvementItems={improvementItems}
+          spellingItems={spellingItems}
+          onSelectIssue={handleSelectIssue}
         />
-        <div
-          className={cn(
-            SHARED_BOX_CLASSES,
-            "pointer-events-none absolute inset-0 z-10 border-transparent text-neutral-800",
-          )}
-        >
-          {text.length > 0 && renderTokenNodes()}
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <span className="text-sm font-medium whitespace-nowrap text-neutral-600">
-          {text.length} 文字
-        </span>
-        <span className="flex flex-wrap gap-2">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap",
-              highlightCount > 0
-                ? "bg-amber-100 text-amber-900"
-                : "bg-neutral-100 text-neutral-500",
-            )}
-          >
-            <span className="text-base font-bold">{highlightCount}</span>
-            件の改善ポイント
-          </span>
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap",
-              typoCount > 0 ? "bg-red-100 text-red-900" : "bg-neutral-100 text-neutral-500",
-            )}
-          >
-            <span className="text-base font-bold">{typoCount}</span>
-            件のスペルミスの疑い
-          </span>
-        </span>
-      </div>
+      )}
     </div>
   );
 }

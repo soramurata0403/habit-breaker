@@ -15,6 +15,7 @@ type WordTokenProps = {
   fullText: string;
   dictionary: Set<string> | null;
   isOpen: boolean;
+  isJumpTarget?: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
   onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
@@ -26,6 +27,7 @@ export function WordToken({
   fullText,
   dictionary,
   isOpen,
+  isJumpTarget = false,
   onOpenChange,
   onReplace,
   onConfirmAiTypo,
@@ -43,6 +45,7 @@ export function WordToken({
       <Popover.Trigger asChild>
         <button
           type="button"
+          id={`token-${token.start}`}
           className={cn(
             // padding/margin/border は一切持たせない: textarea 側の文字幅と
             // 完全に一致させるため（背景色・ring は box-shadow ベースでレイアウトに影響しない）。
@@ -58,6 +61,9 @@ export function WordToken({
                     isOpen && "bg-amber-200 ring-2 ring-amber-400",
                   )
                 : cn("hover:bg-teal-50", isOpen && "bg-teal-50 ring-2 ring-teal-200"),
+            // サイドパネルの一覧からジャンプしてきた直後、対象の単語を
+            // 一時的に光らせて視線を誘導する（点滅アニメーション）。
+            isJumpTarget && "animate-issue-jump",
           )}
         >
           {token.text}
