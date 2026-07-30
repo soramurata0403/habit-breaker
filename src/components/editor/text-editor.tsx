@@ -218,15 +218,14 @@ export function TextEditor() {
       lastAnalysisAtRef.current = Date.now();
       inFlightRef.current = normalized;
 
-      // 利用回数は「実際にリクエストを送り、正常な応答を受け取った」場合のみ
-      // 消費する。1回の解析で2本のAPIが飛ぶため、消費は1回にまとめる。
+      // 事前スキャン自体は利用回数を消費しない（消費するのは本文を書き換えた
+      // 瞬間だけ）。ここでは「解析に成功した本文」の記録だけを行い、
+      // 同じ内容を何度も解析しないようにする。失敗時は更新しないため、
+      // 次のきっかけで再試行できる。
       let counted = false;
       const countOnce = () => {
         if (counted) return;
         counted = true;
-        consumeRequest();
-        // 「最後にAPI解析に成功した本文」として記録する。失敗時は更新しない
-        // ため、次のきっかけで再試行できる。
         lastAnalyzedRef.current = normalized;
       };
 
@@ -237,19 +236,20 @@ export function TextEditor() {
         }
       };
 
-      scanTextForContextualTypos(analysisText).then(({ didRequest, typos }) => {
+      scanTextForContextualTypos(analysisText).then(({ didRequest, issues }) => {
         if (didRequest) countOnce();
         markSettled();
-        if (cancelled || typos.length === 0) return;
+        if (cancelled || issues.length === 0) return;
         setAiTypos((prev) => {
           const next = new Map(prev);
           let changed = false;
-          for (const typo of typos) {
-            const key = typo.word.toLowerCase();
+          for (const issue of issues) {
+            const key = issue.word.toLowerCase();
             if (!next.has(key)) {
               next.set(key, {
-                suggestedSpelling: typo.suggestedSpelling,
-                explanation: typo.explanation,
+                phrase: issue.phrase,
+                correction: issue.correction,
+                explanation: issue.explanation,
               });
               changed = true;
             }
@@ -298,12 +298,13 @@ export function TextEditor() {
   // クリック時にAI（/api/word-insight）が isTypo: true と判定した単語も、
   // 以後は文章全体でリアルタイムに赤ハイライトへ反映されるようにする。
   const handleConfirmAiTypo = useCallback(
-    (word: string, suggestedSpelling: string, explanation: string) => {
+    (word: string, correction: string, explanation: string) => {
       const key = word.toLowerCase();
       setAiTypos((prev) => {
         if (prev.has(key)) return prev;
         const next = new Map(prev);
-        next.set(key, { suggestedSpelling, explanation });
+        // クリック経由で判明した誤りは単語1語単位（句情報は持たない）。
+        next.set(key, { phrase: word, correction, explanation });
         return next;
       });
     },
@@ -330,7 +331,7 @@ export function TextEditor() {
   const vagueStarts = vaguePronouns.text === text ? vaguePronouns.starts : EMPTY_STARTS;
   const tokens = useMemo(() => {
     const base = tokenize(text, spellcheckDictionary);
-    const withTypos = applyAiTypoFlags(base, aiTypos);
+    const withTypos = applyAiTypoFlags(base, aiTypos, text);
     return applyPronounContextFlags(withTypos, vagueStarts);
   }, [text, spellcheckDictionary, aiTypos, vagueStarts]);
   const { improvements: improvementItems, spelling: spellingItems } = useMemo(
@@ -360,6 +361,11 @@ export function TextEditor() {
   }, [text]);
 
   function handleReplace(start: number, end: number, replacement: string) {
+    // 利用回数は「本文を実際に書き換えた瞬間」だけ消費する
+    // （解説やパラフレーズ候補を閲覧しただけでは消費しない）。
+    if (isExhausted) return;
+    consumeRequest();
+
     const next = text.slice(0, start) + replacement + text.slice(end);
     const caret = start + replacement.length;
     setText(next);
@@ -700,10 +706,10 @@ export function TextEditor() {
               )}
             >
               {isExhausted ? (
-                <>本日の解析上限に到達（{MAX_DAILY_REQUESTS} / {MAX_DAILY_REQUESTS} 回）</>
+                <>本日の修正上限に到達（{MAX_DAILY_REQUESTS} / {MAX_DAILY_REQUESTS} 回）</>
               ) : (
                 <>
-                  本日の解析 残り
+                  本日の修正 残り
                   <span className="text-sm font-bold">{remaining}</span>／
                   {MAX_DAILY_REQUESTS} 回
                 </>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
 
@@ -10,7 +10,6 @@ import { suggestCorrections } from "@/lib/spellcheck";
 import { fetchWordInsight, requiresApiCall, type WordInsight } from "@/lib/word-insight";
 import { contextualPronouns, type Suggestion } from "@/data/habit-rules";
 import { DAILY_LIMIT_MESSAGE, MAX_TEXT_LENGTH } from "@/lib/config";
-import { consumeRequest } from "@/lib/usage-store";
 
 type WordTokenProps = {
   token: Extract<Token, { type: "word" }>;
@@ -59,6 +58,17 @@ export function WordToken({
 
   function handlePick(replacement: string) {
     onReplace(token.start, token.end, matchCase(token.text, replacement));
+  }
+
+  /**
+   * 誤りの修正を適用する。句レベルの修正（例: "am believing" → "believe"）では
+   * 単語1語ではなく句全体を置き換え、"am believe" のような文法崩壊を防ぐ。
+   */
+  function handleApplyCorrection(correction: string) {
+    const start = token.aiReplaceStart ?? token.start;
+    const end = token.aiReplaceEnd ?? token.end;
+    const original = fullText.slice(start, end);
+    onReplace(start, end, matchCase(original, correction));
   }
 
   // 他のハイライト単語やサイドパネルの一覧項目をクリックした場合は、
@@ -132,6 +142,28 @@ export function WordToken({
               }
               suggestions={token.rule.suggestions}
               onPick={handlePick}
+              isUsageExhausted={isUsageExhausted}
+            />
+          ) : isTypoFlagged ? (
+            // 赤色（ミスの疑い）は「警告バッジ・理由・修正するボタン」だけを出す。
+            // 言い換え候補は取得しない（非同期に届いた候補が解説を上書きして
+            // 消えてしまう問題を避けるため）。修正して通常の文になった後で、
+            // 改めてダブルクリックすれば言い換えを探せる。
+            <CorrectionCard
+              word={token.text}
+              correction={
+                token.isAiTypo
+                  ? token.aiCorrection
+                  : dictionary
+                    ? suggestCorrections(token.text, dictionary, 1)[0]
+                    : undefined
+              }
+              explanation={
+                token.aiExplanation ??
+                `"${token.text}" は辞書に見つかりませんでした。スペルミスの可能性があります。`
+              }
+              isUsageExhausted={isUsageExhausted}
+              onApply={handleApplyCorrection}
             />
           ) : (
             <DynamicInsight
@@ -141,11 +173,6 @@ export function WordToken({
               fullText={fullText}
               isUsageExhausted={isUsageExhausted}
               isOverLength={isOverLength}
-              isTypoFlagged={isTypoFlagged}
-              isAiTypo={Boolean(token.isAiTypo)}
-              aiSuggestedSpelling={token.aiSuggestedSpelling}
-              aiExplanation={token.aiExplanation}
-              dictionary={dictionary}
               onPick={handlePick}
               onConfirmAiTypo={onConfirmAiTypo}
               onConfirmVaguePronoun={onConfirmVaguePronoun}
@@ -158,20 +185,61 @@ export function WordToken({
   );
 }
 
-function buildLocalTypoInsight(word: string, dictionary: Set<string>): WordInsight {
-  const suggestions = suggestCorrections(word, dictionary, 3);
-  const topSuggestion = suggestions[0];
+/**
+ * 赤色ハイライト（ミスの疑い）専用の表示。
+ * 警告バッジ・日本語の理由・「修正する」ボタンの3点だけを出し、
+ * 言い換え候補の取得は行わない。
+ */
+function CorrectionCard({
+  word,
+  correction,
+  explanation,
+  isUsageExhausted,
+  onApply,
+}: {
+  word: string;
+  correction?: string;
+  explanation: string;
+  isUsageExhausted: boolean;
+  onApply: (correction: string) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800">
+          <TriangleAlert className="h-3 w-3" />
+          ミスの疑い
+        </span>
+        <span className="font-mono text-sm font-semibold text-neutral-900">{word}</span>
+      </div>
 
-  return {
-    word: word.toLowerCase(),
-    source: "typo-local",
-    badgeLabel: "スペルチェック",
-    insight: topSuggestion
-      ? `"${word}" は辞書に見つかりませんでした。スペルミスの可能性があります。`
-      : `"${word}" は辞書に見つかりませんでした。近い綴りの候補も見つかりませんでした。`,
-    suggestions: [],
-    ...(topSuggestion ? { isTypo: true, suggestedSpelling: topSuggestion } : {}),
-  };
+      <p className="mb-4 text-sm leading-relaxed text-neutral-600">{explanation}</p>
+
+      {correction ? (
+        isUsageExhausted ? (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {DAILY_LIMIT_MESSAGE}
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onApply(correction)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-left transition-colors hover:border-red-400 hover:bg-red-100"
+          >
+            <span className="flex items-center gap-1.5 text-sm font-medium text-red-800">
+              <ArrowRight className="h-4 w-4 shrink-0" />
+              {correction}
+            </span>
+            <span className="shrink-0 rounded-md bg-red-600 px-2 py-1 text-xs font-semibold text-white">
+              修正する
+            </span>
+          </button>
+        )
+      ) : (
+        <p className="text-xs text-neutral-400">近い綴りの候補が見つかりませんでした。</p>
+      )}
+    </div>
+  );
 }
 
 function DynamicInsight({
@@ -181,11 +249,6 @@ function DynamicInsight({
   fullText,
   isUsageExhausted,
   isOverLength,
-  isTypoFlagged,
-  isAiTypo,
-  aiSuggestedSpelling,
-  aiExplanation,
-  dictionary,
   onPick,
   onConfirmAiTypo,
   onConfirmVaguePronoun,
@@ -196,53 +259,17 @@ function DynamicInsight({
   fullText: string;
   isUsageExhausted: boolean;
   isOverLength: boolean;
-  isTypoFlagged: boolean;
-  isAiTypo: boolean;
-  aiSuggestedSpelling?: string;
-  aiExplanation?: string;
-  dictionary: Set<string> | null;
   onPick: (replacement: string) => void;
-  onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
+  onConfirmAiTypo: (word: string, correction: string, explanation: string) => void;
   onConfirmVaguePronoun: (position: number, forText: string) => void;
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
 
-  // 事前スキャン・過去のクリックでAIが文脈的な誤りだと確認済みの場合は、
-  // それを最優先の即時表示として使う（辞書に無い語の編集距離ベースの
-  // 推測よりも、実際にAIが確認した候補の方が信頼できるため）。
-  // それ以外で辞書に無い語（isUnknownWord）の場合は、編集距離ベースの
-  // 候補をAIの応答を待たずに即座に表示する（リアルタイム性を優先）。
-  const instantFallback = useMemo(() => {
-    if (isAiTypo && aiSuggestedSpelling) {
-      return {
-        word: word.toLowerCase(),
-        source: "ai" as const,
-        badgeLabel: "解説",
-        insight:
-          aiExplanation ?? `"${word}" は文脈上、誤字である可能性が高いと判断されました。`,
-        suggestions: [],
-        isTypo: true,
-        suggestedSpelling: aiSuggestedSpelling,
-      } satisfies WordInsight;
-    }
-    if (isTypoFlagged && dictionary) {
-      return buildLocalTypoInsight(word, dictionary);
-    }
-    return null;
-  }, [isAiTypo, aiSuggestedSpelling, aiExplanation, isTypoFlagged, dictionary, word]);
-
-  // 既にタイポ確定済み（instantFallback.isTypo）の場合に、後から届く
-  // /api/word-insight の応答だけを信頼してその判定を破棄・上書きしない
-  // ようにするための値。LLMの応答は同じ単語・文脈でも毎回完全に同じとは
-  // 限らず、後続の呼び出しが「タイポではない」と揺れて返ることがある。
-  const confirmedSuggestedSpelling = instantFallback?.isTypo
-    ? instantFallback.suggestedSpelling
-    : undefined;
-
-  // コーパスルールに載っている単語は通信不要で即座に返せるため、
-  // 利用回数の上限や文字数超過の影響を受けない。
+  // コーパスルールに載っている単語は通信不要で即座に返せる。
   const needsApi = requiresApiCall(word);
-  const isBlocked = needsApi && (isUsageExhausted || isOverLength);
+  // 閲覧自体は利用回数を消費しないため、上限到達でも解説は表示できる。
+  // 文字数超過のときだけ通信を止める。
+  const isBlocked = needsApi && isOverLength;
 
   useEffect(() => {
     if (!isOpen || isBlocked) return;
@@ -253,28 +280,11 @@ function DynamicInsight({
       ? getExtendedContext(fullText, start, 1)
       : getContextSentence(fullText, start);
     fetchWordInsight(word, contextSentence, fullText).then((result) => {
-      // source が "ai" のときだけ、実際にAPIへ問い合わせて正常な応答を
-      // 受け取っている（コーパス由来・ローカルフォールバックは消費しない）。
-      if (result.source === "ai") consumeRequest();
       if (cancelled) return;
-      // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
-      // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。
-      if (isTypoFlagged && result.source === "unknown") return;
+      setInsight(result);
 
-      // 既にタイポと確定済みなのに、今回の応答がそれを否定した場合は、
-      // 解説・言い換え候補は新しい内容を採用しつつ、タイポの警告バナーは
-      // 維持する（結合）。ユーザーが修正するか閉じるまで消さないため。
-      const shouldPreserveConfirmedTypo =
-        Boolean(confirmedSuggestedSpelling) && !result.isTypo;
-
-      setInsight(
-        shouldPreserveConfirmedTypo
-          ? { ...result, isTypo: true, suggestedSpelling: confirmedSuggestedSpelling }
-          : result,
-      );
-
-      // クリックして初めてAIが isTypo: true と判定した単語も、以後は
-      // 文章全体でリアルタイムに赤ハイライト・件数へ反映されるようにする。
+      // クリックして初めてAIが誤りだと判定した単語は、以後は文章全体で
+      // リアルタイムに赤ハイライト・件数へ反映されるようにする。
       if (result.isTypo && result.suggestedSpelling) {
         onConfirmAiTypo(word, result.suggestedSpelling, result.insight);
       }
@@ -291,27 +301,20 @@ function DynamicInsight({
   }, [
     isOpen,
     isBlocked,
-    needsApi,
     word,
     start,
     fullText,
-    isTypoFlagged,
     onConfirmAiTypo,
     onConfirmVaguePronoun,
-    confirmedSuggestedSpelling,
   ]);
 
-  const resolved =
-    insight && insight.word === word.toLowerCase() ? insight : instantFallback;
+  const resolved = insight && insight.word === word.toLowerCase() ? insight : null;
 
-  // 上限到達・文字数超過で通信できず、ローカルの候補も無い場合は理由を表示する。
   if (isBlocked && !resolved) {
     return (
       <div className="py-2">
         <p className="text-sm leading-relaxed text-neutral-600">
-          {isOverLength
-            ? `解析できるのは${MAX_TEXT_LENGTH}文字までです。文字数を減らすと解説を表示できます。`
-            : DAILY_LIMIT_MESSAGE}
+          解析できるのは{MAX_TEXT_LENGTH}文字までです。文字数を減らすと解説を表示できます。
         </p>
       </div>
     );
@@ -330,18 +333,17 @@ function DynamicInsight({
     <InsightCard
       badgeLabel={resolved.badgeLabel}
       badgeClassName={
-        resolved.source === "typo-local"
-          ? "bg-red-100 text-red-800"
-          : resolved.source === "ai"
-            ? "bg-indigo-100 text-indigo-800"
-            : resolved.source === "generic"
-              ? "bg-teal-100 text-teal-800"
-              : "bg-neutral-100 text-neutral-500"
+        resolved.source === "ai"
+          ? "bg-indigo-100 text-indigo-800"
+          : resolved.source === "generic"
+            ? "bg-teal-100 text-teal-800"
+            : "bg-neutral-100 text-neutral-500"
       }
       headword={resolved.word}
       insight={resolved.insight}
       suggestions={resolved.suggestions}
       onPick={onPick}
+      isUsageExhausted={isUsageExhausted}
       emptyMessage={
         // we/us/our が「具体的な人物を指す適切な用法」と確認された場合は、
         // 解説文自体がその旨を説明しているため、汎用の空メッセージは表示しない。
@@ -349,8 +351,6 @@ function DynamicInsight({
           ? undefined
           : "この単語にはまだ言い換え候補がありません。"
       }
-      isTypo={resolved.isTypo}
-      suggestedSpelling={resolved.suggestedSpelling}
     />
   );
 }
@@ -363,8 +363,7 @@ function InsightCard({
   suggestions,
   onPick,
   emptyMessage,
-  isTypo,
-  suggestedSpelling,
+  isUsageExhausted,
 }: {
   badgeLabel: string;
   badgeClassName: string;
@@ -373,26 +372,10 @@ function InsightCard({
   suggestions: Suggestion[];
   onPick: (replacement: string) => void;
   emptyMessage?: string;
-  isTypo?: boolean;
-  suggestedSpelling?: string;
+  isUsageExhausted?: boolean;
 }) {
   return (
     <div>
-      {isTypo && suggestedSpelling && (
-        <button
-          type="button"
-          onClick={() => onPick(suggestedSpelling)}
-          className="mb-3 flex w-full items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-left transition-colors hover:border-red-400 hover:bg-red-100"
-        >
-          <span className="flex items-center gap-1.5 text-sm font-medium text-red-800">
-            <TriangleAlert className="h-4 w-4 shrink-0" />
-            スペルミスの可能性があります: &quot;{suggestedSpelling}&quot;
-          </span>
-          <span className="shrink-0 rounded-md bg-red-600 px-2 py-1 text-xs font-semibold text-white">
-            修正する
-          </span>
-        </button>
-      )}
       <div className="mb-2 flex items-center gap-2">
         <span
           className={cn(
@@ -415,27 +398,33 @@ function InsightCard({
           <p className="mb-2 text-xs font-semibold tracking-wide text-neutral-400 uppercase">
             言い換え候補
           </p>
-          <div className="space-y-1.5">
-            {suggestions.map((suggestion) => (
-              <button
-                key={suggestion.word}
-                type="button"
-                onClick={() => onPick(suggestion.word)}
-                className="group flex w-full items-center justify-between rounded-lg border border-neutral-200 px-3 py-2 text-left transition-colors hover:border-teal-400 hover:bg-teal-50"
-              >
-                <span className="flex items-center gap-1.5">
-                  <ArrowRight className="h-3.5 w-3.5 text-neutral-300 transition-colors group-hover:text-teal-500" />
-                  <span className="font-medium text-neutral-900">
-                    {suggestion.word}
+          {isUsageExhausted ? (
+            // 閲覧は自由だが、本文への適用は利用回数を消費するため上限後は行えない。
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              {DAILY_LIMIT_MESSAGE}
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.word}
+                  type="button"
+                  onClick={() => onPick(suggestion.word)}
+                  className="group flex w-full items-center justify-between rounded-lg border border-neutral-200 px-3 py-2 text-left transition-colors hover:border-teal-400 hover:bg-teal-50"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <ArrowRight className="h-3.5 w-3.5 text-neutral-300 transition-colors group-hover:text-teal-500" />
+                    <span className="font-medium text-neutral-900">
+                      {suggestion.word}
+                    </span>
                   </span>
-                </span>
-                <span className="text-xs text-neutral-500">{suggestion.nuance}</span>
-              </button>
-            ))}
-          </div>
+                  <span className="text-xs text-neutral-500">{suggestion.nuance}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </>
       ) : (
-        !isTypo &&
         emptyMessage && <p className="text-xs text-neutral-400">{emptyMessage}</p>
       )}
     </div>

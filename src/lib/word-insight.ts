@@ -122,19 +122,23 @@ function localFallback(rawWord: string, word: string): WordInsight {
 }
 
 export type ContextualTypo = {
+  /** 誤りの中心となる単語（ハイライト対象）。 */
   word: string;
-  suggestedSpelling: string;
+  /** 置換対象の原文の範囲。単語1語のこともあれば "am believing" のような句のこともある。 */
+  phrase: string;
+  /** phrase を置き換える正しい表現。 */
+  correction: string;
   explanation: string;
 };
 
-type ScanApiResponse = { typos?: unknown };
+type ScanApiResponse = { issues?: unknown };
 
 /**
  * `didRequest` は「実際にサーバーへリクエストを送り、正常な応答を受け取った」
  * ことを表す。利用回数はこれが true の場合にのみ消費する（通信していない場合や
  * エラー・レート制限で弾かれた場合は消費しない）。
  */
-export type ScanOutcome = { didRequest: boolean; typos: ContextualTypo[] };
+export type ScanOutcome = { didRequest: boolean; issues: ContextualTypo[] };
 
 /**
  * /api/text-scan を呼び出し、文章全体から「実在するが文脈上明らかに
@@ -143,7 +147,7 @@ export type ScanOutcome = { didRequest: boolean; typos: ContextualTypo[] };
  * 呼び出し側は単に「今回は検出結果なし」として扱えるようにする。
  */
 export async function scanTextForContextualTypos(text: string): Promise<ScanOutcome> {
-  if (!text.trim()) return { didRequest: false, typos: [] };
+  if (!text.trim()) return { didRequest: false, issues: [] };
 
   try {
     const response = await fetch("/api/text-scan", {
@@ -152,33 +156,33 @@ export async function scanTextForContextualTypos(text: string): Promise<ScanOutc
       body: JSON.stringify({ text }),
     });
 
-    if (!response.ok) return { didRequest: false, typos: [] };
+    if (!response.ok) return { didRequest: false, issues: [] };
 
     const data = (await response.json()) as ScanApiResponse;
-    if (!Array.isArray(data.typos)) return { didRequest: true, typos: [] };
+    if (!Array.isArray(data.issues)) return { didRequest: true, issues: [] };
 
-    const typos = data.typos
-      .filter(
-        (item): item is { word: string; suggestedSpelling: string; explanation: string } => {
-          if (!item || typeof item !== "object") return false;
-          const t = item as Record<string, unknown>;
-          return (
-            typeof t.word === "string" &&
-            typeof t.suggestedSpelling === "string" &&
-            typeof t.explanation === "string"
-          );
-        },
-      )
+    const issues = data.issues
+      .filter((item): item is ContextualTypo => {
+        if (!item || typeof item !== "object") return false;
+        const t = item as Record<string, unknown>;
+        return (
+          typeof t.word === "string" &&
+          typeof t.phrase === "string" &&
+          typeof t.correction === "string" &&
+          typeof t.explanation === "string"
+        );
+      })
       .map((item) => ({
         word: item.word,
-        suggestedSpelling: item.suggestedSpelling,
+        phrase: item.phrase,
+        correction: item.correction,
         explanation: item.explanation,
       }));
 
-    return { didRequest: true, typos };
+    return { didRequest: true, issues };
   } catch (error) {
-    console.error("Failed to scan text for contextual typos:", error);
-    return { didRequest: false, typos: [] };
+    console.error("Failed to scan text for contextual issues:", error);
+    return { didRequest: false, issues: [] };
   }
 }
 

@@ -8,7 +8,10 @@ import {
 import { isUnknownWord } from "@/lib/spellcheck";
 
 export type AiTypoInfo = {
-  suggestedSpelling: string;
+  /** 置換対象の原文の範囲。単語1語のことも "am believing" のような句のこともある。 */
+  phrase: string;
+  /** phrase を置き換える正しい表現。 */
+  correction: string;
   explanation: string;
 };
 
@@ -32,8 +35,12 @@ export type Token =
       occurrenceCount?: number;
       isUnknownWord?: boolean;
       isAiTypo?: boolean;
-      aiSuggestedSpelling?: string;
+      aiCorrection?: string;
       aiExplanation?: string;
+      // 置換範囲。句レベルの修正（例: "am believing" → "believe"）では
+      // 単語1語ではなく句全体を差し替えるため、単語トークンとは別に保持する。
+      aiReplaceStart?: number;
+      aiReplaceEnd?: number;
     };
 
 const SENTENCE_END_PATTERN = /[.!?]/;
@@ -221,6 +228,7 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
 export function applyAiTypoFlags(
   tokens: Token[],
   aiTypos: Map<string, AiTypoInfo>,
+  text: string,
 ): Token[] {
   if (aiTypos.size === 0) return tokens;
 
@@ -230,13 +238,47 @@ export function applyAiTypoFlags(
     const match = aiTypos.get(token.text.toLowerCase());
     if (!match) return token;
 
+    // 句レベルの修正では、その単語を含む句の範囲を原文から探して置換範囲にする。
+    // 見つからない場合（本文が編集された等）は単語1語の範囲にフォールバックする。
+    const range = findPhraseRange(text, match.phrase, token.start, token.end);
+
     return {
       ...token,
       isAiTypo: true,
-      aiSuggestedSpelling: match.suggestedSpelling,
+      aiCorrection: match.correction,
       aiExplanation: match.explanation,
+      aiReplaceStart: range?.start ?? token.start,
+      aiReplaceEnd: range?.end ?? token.end,
     };
   });
+}
+
+/**
+ * `phrase` の出現箇所のうち、[wordStart, wordEnd] を含むものを探す。
+ * 例: "I am believing that..." の "believing" に対して phrase="am believing" を
+ * 渡すと、"am believing" の範囲を返す。
+ */
+function findPhraseRange(
+  text: string,
+  phrase: string,
+  wordStart: number,
+  wordEnd: number,
+): { start: number; end: number } | null {
+  const trimmed = phrase.trim();
+  if (!trimmed) return null;
+
+  // 単語1語の修正なら、そのトークンの範囲をそのまま使う。
+  if (trimmed.toLowerCase() === text.slice(wordStart, wordEnd).toLowerCase()) {
+    return { start: wordStart, end: wordEnd };
+  }
+
+  let index = text.indexOf(trimmed);
+  while (index !== -1) {
+    const end = index + trimmed.length;
+    if (index <= wordStart && wordEnd <= end) return { start: index, end };
+    index = text.indexOf(trimmed, index + 1);
+  }
+  return null;
 }
 
 /**

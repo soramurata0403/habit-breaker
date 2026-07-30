@@ -43,8 +43,8 @@ export function buildIssueItems(tokens: Token[]): {
         tokenKey: token.key,
         word: token.text,
         detail:
-          token.isAiTypo && token.aiSuggestedSpelling
-            ? `もしかして: "${token.aiSuggestedSpelling}"`
+          token.isAiTypo && token.aiCorrection
+            ? `もしかして: "${token.aiCorrection}"`
             : "辞書に見つからない単語です。スペルミスの可能性があります。",
       });
     }
