@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { RotateCcw, Sparkles } from "lucide-react";
+import { ClipboardPaste, RotateCcw, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { tokenize } from "@/lib/tokenize";
@@ -11,6 +11,15 @@ import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 
 const MIN_HEIGHT = 224;
+
+// 入力中の単語（例: "policy" の途中の "polic"）を誤ってスペルミス判定
+// しないよう、入力が止まってからこの時間が経過するまでスペルチェックの
+// 反映を遅らせる。
+const SPELLCHECK_DEBOUNCE_MS = 900;
+
+// 権限ダイアログが表示されない/応答が返らない環境で貼り付けボタンが
+// 無反応に見えたままにならないよう、待機時間の上限を設ける。
+const PASTE_TIMEOUT_MS = 8000;
 
 // textarea とハイライト表示用オーバーレイの文字位置を完全に一致させるため、
 // フォント・行間・字間・改行規則・パディング・ボーダー幅・box-sizing を
@@ -25,6 +34,9 @@ export function TextEditor() {
   const [text, setText] = useState("");
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [dictionary, setDictionary] = useState<Set<string> | null>(null);
+  const [debouncedText, setDebouncedText] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [isPasting, setIsPasting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -37,7 +49,18 @@ export function TextEditor() {
     };
   }, []);
 
-  const tokens = useMemo(() => tokenize(text, dictionary), [text, dictionary]);
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setDebouncedText(text), SPELLCHECK_DEBOUNCE_MS);
+    return () => clearTimeout(timeoutId);
+  }, [text]);
+
+  // 入力が確定した（＝一定時間止まった）場合のみ辞書チェックを適用する。
+  // まだ確定していない間は dictionary を渡さず、赤色ハイライトの更新を保留する。
+  const spellcheckDictionary = debouncedText === text ? dictionary : null;
+  const tokens = useMemo(
+    () => tokenize(text, spellcheckDictionary),
+    [text, spellcheckDictionary],
+  );
   const highlightCount = useMemo(
     () => tokens.filter((token) => token.type === "word" && token.rule).length,
     [tokens],
@@ -77,6 +100,43 @@ export function TextEditor() {
     setActiveKey(null);
   }
 
+  async function handlePaste() {
+    setPasteError(null);
+
+    if (!navigator.clipboard?.readText) {
+      setPasteError(
+        "お使いのブラウザはボタンからの貼り付けに対応していません。Ctrl+V（Macは⌘+V）で貼り付けてください。",
+      );
+      return;
+    }
+
+    setIsPasting(true);
+    try {
+      // 権限ダイアログが表示されないまま応答が返らないブラウザ環境も
+      // あるため、一定時間で諦めてフォールバック表示に切り替える。
+      const clipboardText = await Promise.race([
+        navigator.clipboard.readText(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("clipboard-read-timeout")), PASTE_TIMEOUT_MS),
+        ),
+      ]);
+      if (!clipboardText) {
+        setPasteError("クリップボードにテキストが見つかりませんでした。");
+        return;
+      }
+      setText(clipboardText);
+      setActiveKey(null);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    } catch (error) {
+      console.error("Failed to read clipboard:", error);
+      setPasteError(
+        "クリップボードの読み取りが許可されませんでした。Ctrl+V（Macは⌘+V）で貼り付けてください。",
+      );
+    } finally {
+      setIsPasting(false);
+    }
+  }
+
   function handleClear() {
     setText("");
     setActiveKey(null);
@@ -101,12 +161,28 @@ export function TextEditor() {
             <Sparkles className="h-4 w-4" />
             サンプル文章をセット
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={handlePaste}
+            disabled={isPasting}
+          >
+            <ClipboardPaste className="h-4 w-4" />
+            {isPasting ? "貼り付け中..." : "貼り付け"}
+          </Button>
           <Button type="button" size="sm" variant="outline" onClick={handleClear}>
             <RotateCcw className="h-4 w-4" />
             クリア
           </Button>
         </div>
       </div>
+
+      {pasteError && (
+        <p className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {pasteError}
+        </p>
+      )}
 
       <div className="relative">
         <textarea
