@@ -13,7 +13,7 @@ type IssuePanelProps = {
   onClose: () => void;
   improvementItems: IssueItem[];
   spellingItems: IssueItem[];
-  onSelectIssue: (id: number) => void;
+  onSelectIssue: (id: number, tokenKey: string) => void;
 };
 
 export function IssuePanel({
@@ -28,8 +28,20 @@ export function IssuePanel({
 
   return (
     // 幅・配置は親のラッパーが制御する（画面幅によって浮かせるか下に積むかが変わる）。
-    <aside className="animate-panel-in w-full rounded-2xl border border-neutral-200 bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-3 py-3">
+    // relative は閉じるボタンを枠の外側へ出すための基準。
+    <aside className="animate-panel-in relative w-full rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      {/* 閉じるボタンはパネルの白い枠と重ならないよう、負のオフセットで
+          枠の外側（右上）へ出す。枠から約12px外側に浮かぶ。 */}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="パネルを閉じる"
+        className="absolute -top-3 -right-3 z-20 rounded-full border border-neutral-200 bg-white p-1.5 text-neutral-400 shadow-md transition-colors hover:bg-neutral-50 hover:text-neutral-600"
+      >
+        <X className="h-4 w-4" />
+      </button>
+
+      <div className="flex items-center border-b border-neutral-100 px-3 py-3">
         <div className="flex gap-1 rounded-full bg-neutral-100 p-1 text-xs font-semibold">
           <button
             type="button"
@@ -56,14 +68,6 @@ export function IssuePanel({
             スペルミス（{spellingItems.length}）
           </button>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="パネルを閉じる"
-          className="shrink-0 rounded-full p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-neutral-600"
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
 
       <div className="max-h-[28rem] overflow-y-auto p-3">
@@ -79,7 +83,7 @@ export function IssuePanel({
               <li key={item.id}>
                 <button
                   type="button"
-                  onClick={() => onSelectIssue(item.id)}
+                  onClick={() => onSelectIssue(item.id, item.tokenKey)}
                   className="w-full rounded-xl border border-neutral-200 px-3 py-2.5 text-left transition-colors hover:border-teal-300 hover:bg-teal-50"
                 >
                   <span

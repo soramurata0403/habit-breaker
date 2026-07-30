@@ -2,6 +2,9 @@ import type { Token } from "@/lib/tokenize";
 
 export type IssueItem = {
   id: number;
+  // 対応する word トークンの key。一覧をクリックした際に、本文中の
+  // 同じ単語のポップオーバー（解説・言い換え候補）を開くために使う。
+  tokenKey: string;
   word: string;
   detail: string;
 };
@@ -25,6 +28,7 @@ export function buildIssueItems(tokens: Token[]): {
     if (token.rule) {
       improvements.push({
         id: token.start,
+        tokenKey: token.key,
         word: token.text,
         detail: token.occurrenceCount
           ? `この文章内で${token.occurrenceCount}回使われています。言い換えを検討しましょう。`
@@ -36,6 +40,7 @@ export function buildIssueItems(tokens: Token[]): {
     if (token.isAiTypo || token.isUnknownWord) {
       spelling.push({
         id: token.start,
+        tokenKey: token.key,
         word: token.text,
         detail:
           token.isAiTypo && token.aiSuggestedSpelling

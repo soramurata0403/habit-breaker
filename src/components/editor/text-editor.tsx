@@ -296,13 +296,20 @@ export function TextEditor() {
   }
 
   // サイドパネルの一覧項目をクリックした時、本文中の該当単語まで
-  // スムーズスクロールし、一時的にパルス演出でハイライトする。
-  const handleSelectIssue = useCallback((id: number) => {
+  // スムーズスクロールし、一時的にパルス演出でハイライトした上で、
+  // その単語の直下に詳細ポップオーバー（理由・言い換え候補・適用ボタン）を
+  // 開く。本文の単語を直接クリックした場合と同じ内容が表示される。
+  const handleSelectIssue = useCallback((id: number, tokenKey: string) => {
     setJumpTargetId(id);
     document.getElementById(`token-${id}`)?.scrollIntoView({
       behavior: "smooth",
       block: "center",
     });
+
+    // このクリック（pointerdown → click）が Radix の「外側クリック」
+    // として拾われ、開いた直後に閉じてしまうのを避けるため、
+    // ポップオーバーを開くのは現在のイベント処理が終わってから行う。
+    requestAnimationFrame(() => setActiveKey(tokenKey));
 
     if (jumpTimeoutRef.current) clearTimeout(jumpTimeoutRef.current);
     jumpTimeoutRef.current = setTimeout(() => {
