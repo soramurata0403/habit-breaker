@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { getContextSentence, matchCase, type Token } from "@/lib/tokenize";
+import { suggestCorrections } from "@/lib/spellcheck";
 import { fetchWordInsight, type WordInsight } from "@/lib/word-insight";
 import type { Suggestion } from "@/data/habit-rules";
 
 type WordTokenProps = {
   token: Extract<Token, { type: "word" }>;
   fullText: string;
+  dictionary: Set<string> | null;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
@@ -20,11 +22,13 @@ type WordTokenProps = {
 export function WordToken({
   token,
   fullText,
+  dictionary,
   isOpen,
   onOpenChange,
   onReplace,
 }: WordTokenProps) {
   const isHighlighted = Boolean(token.rule);
+  const isTypoFlagged = Boolean(token.isUnknownWord);
 
   function handlePick(replacement: string) {
     onReplace(token.start, token.end, matchCase(token.text, replacement));
@@ -39,15 +43,17 @@ export function WordToken({
             // padding/margin/border は一切持たせない: textarea 側の文字幅と
             // 完全に一致させるため（背景色・ring は box-shadow ベースでレイアウトに影響しない）。
             "pointer-events-auto m-0 rounded border-0 p-0 align-baseline transition-colors",
-            isHighlighted
+            isTypoFlagged
               ? cn(
-                  "bg-amber-100/80 underline decoration-amber-500 decoration-2 decoration-dotted underline-offset-4 hover:bg-amber-200/80",
-                  isOpen && "bg-amber-200 ring-2 ring-amber-400",
+                  "bg-red-100/80 underline decoration-red-500 decoration-2 decoration-wavy underline-offset-4 hover:bg-red-200/80",
+                  isOpen && "bg-red-200 ring-2 ring-red-400",
                 )
-              : cn(
-                  "hover:bg-teal-50",
-                  isOpen && "bg-teal-50 ring-2 ring-teal-200",
-                ),
+              : isHighlighted
+                ? cn(
+                    "bg-amber-100/80 underline decoration-amber-500 decoration-2 decoration-dotted underline-offset-4 hover:bg-amber-200/80",
+                    isOpen && "bg-amber-200 ring-2 ring-amber-400",
+                  )
+                : cn("hover:bg-teal-50", isOpen && "bg-teal-50 ring-2 ring-teal-200"),
           )}
         >
           {token.text}
@@ -76,6 +82,8 @@ export function WordToken({
               word={token.text}
               start={token.start}
               fullText={fullText}
+              isTypoFlagged={isTypoFlagged}
+              dictionary={dictionary}
               onPick={handlePick}
             />
           )}
@@ -86,17 +94,37 @@ export function WordToken({
   );
 }
 
+function buildLocalTypoInsight(word: string, dictionary: Set<string>): WordInsight {
+  const suggestions = suggestCorrections(word, dictionary, 3);
+  const topSuggestion = suggestions[0];
+
+  return {
+    word: word.toLowerCase(),
+    source: "typo-local",
+    badgeLabel: "スペルチェック",
+    insight: topSuggestion
+      ? `"${word}" は辞書に見つかりませんでした。スペルミスの可能性があります。`
+      : `"${word}" は辞書に見つかりませんでした。近い綴りの候補も見つかりませんでした。`,
+    suggestions: [],
+    ...(topSuggestion ? { isTypo: true, suggestedSpelling: topSuggestion } : {}),
+  };
+}
+
 function DynamicInsight({
   isOpen,
   word,
   start,
   fullText,
+  isTypoFlagged,
+  dictionary,
   onPick,
 }: {
   isOpen: boolean;
   word: string;
   start: number;
   fullText: string;
+  isTypoFlagged: boolean;
+  dictionary: Set<string> | null;
   onPick: (replacement: string) => void;
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
@@ -106,14 +134,29 @@ function DynamicInsight({
     let cancelled = false;
     const contextSentence = getContextSentence(fullText, start);
     fetchWordInsight(word, contextSentence).then((result) => {
-      if (!cancelled) setInsight(result);
+      if (cancelled) return;
+      // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
+      // クライアント側の修正候補（localFallback）の方が有用なので上書きしない。
+      if (isTypoFlagged && result.source === "unknown") return;
+      setInsight(result);
     });
     return () => {
       cancelled = true;
     };
-  }, [isOpen, word, start, fullText]);
+  }, [isOpen, word, start, fullText, isTypoFlagged]);
 
-  if (!insight || insight.word !== word.toLowerCase()) {
+  // 赤色（辞書に無い語）と判定済みの単語は、AIの応答を待たずに
+  // クライアント側の編集距離ベースの候補を即座に表示する（リアルタイム性を優先）。
+  // AIの応答が届き次第（fetchWordInsight → insight state）、より文脈に即した内容に置き換わる。
+  const localFallback = useMemo(
+    () => (isTypoFlagged && dictionary ? buildLocalTypoInsight(word, dictionary) : null),
+    [isTypoFlagged, dictionary, word],
+  );
+
+  const resolved =
+    insight && insight.word === word.toLowerCase() ? insight : localFallback;
+
+  if (!resolved) {
     return (
       <div className="flex items-center gap-2 py-6 text-sm text-neutral-400">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -124,21 +167,23 @@ function DynamicInsight({
 
   return (
     <InsightCard
-      badgeLabel={insight.badgeLabel}
+      badgeLabel={resolved.badgeLabel}
       badgeClassName={
-        insight.source === "ai"
-          ? "bg-indigo-100 text-indigo-800"
-          : insight.source === "generic"
-            ? "bg-teal-100 text-teal-800"
-            : "bg-neutral-100 text-neutral-500"
+        resolved.source === "typo-local"
+          ? "bg-red-100 text-red-800"
+          : resolved.source === "ai"
+            ? "bg-indigo-100 text-indigo-800"
+            : resolved.source === "generic"
+              ? "bg-teal-100 text-teal-800"
+              : "bg-neutral-100 text-neutral-500"
       }
-      headword={insight.word}
-      insight={insight.insight}
-      suggestions={insight.suggestions}
+      headword={resolved.word}
+      insight={resolved.insight}
+      suggestions={resolved.suggestions}
       onPick={onPick}
       emptyMessage="この単語にはまだ言い換え候補がありません。"
-      isTypo={insight.isTypo}
-      suggestedSpelling={insight.suggestedSpelling}
+      isTypo={resolved.isTypo}
+      suggestedSpelling={resolved.suggestedSpelling}
     />
   );
 }
@@ -170,13 +215,13 @@ function InsightCard({
         <button
           type="button"
           onClick={() => onPick(suggestedSpelling)}
-          className="mb-3 flex w-full items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-400 hover:bg-amber-100"
+          className="mb-3 flex w-full items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-left transition-colors hover:border-red-400 hover:bg-red-100"
         >
-          <span className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-red-800">
             <TriangleAlert className="h-4 w-4 shrink-0" />
             スペルミスの可能性があります: &quot;{suggestedSpelling}&quot;
           </span>
-          <span className="shrink-0 rounded-md bg-amber-600 px-2 py-1 text-xs font-semibold text-white">
+          <span className="shrink-0 rounded-md bg-red-600 px-2 py-1 text-xs font-semibold text-white">
             修正する
           </span>
         </button>
@@ -223,6 +268,7 @@ function InsightCard({
           </div>
         </>
       ) : (
+        !isTypo &&
         emptyMessage && <p className="text-xs text-neutral-400">{emptyMessage}</p>
       )}
     </div>

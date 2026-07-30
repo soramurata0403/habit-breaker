@@ -1,7 +1,7 @@
 import { habitRuleMap, type Suggestion } from "@/data/habit-rules";
 import { genericSynonymMap } from "@/data/generic-synonyms";
 
-export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown";
+export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown" | "typo-local";
 
 export type WordInsight = {
   word: string;

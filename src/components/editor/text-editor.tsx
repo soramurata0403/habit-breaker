@@ -1,11 +1,12 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { RotateCcw, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { tokenize } from "@/lib/tokenize";
 import { SAMPLE_TEXT } from "@/data/habit-rules";
+import { loadDictionary } from "@/lib/spellcheck";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 
@@ -23,11 +24,26 @@ const SHARED_BOX_CLASSES =
 export function TextEditor() {
   const [text, setText] = useState("");
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [dictionary, setDictionary] = useState<Set<string> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const tokens = useMemo(() => tokenize(text), [text]);
+  useEffect(() => {
+    let cancelled = false;
+    loadDictionary().then((dict) => {
+      if (!cancelled) setDictionary(dict);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const tokens = useMemo(() => tokenize(text, dictionary), [text, dictionary]);
   const highlightCount = useMemo(
     () => tokens.filter((token) => token.type === "word" && token.rule).length,
+    [tokens],
+  );
+  const typoCount = useMemo(
+    () => tokens.filter((token) => token.type === "word" && token.isUnknownWord).length,
     [tokens],
   );
 
@@ -70,9 +86,15 @@ export function TextEditor() {
   return (
     <div className="w-full">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-1.5 text-sm text-neutral-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-          単語をクリックすると言い換え候補が表示されます（黄色は特に注意すべき癖のある単語）
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
+            黄色：言い換え推奨の癖のある単語
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+            赤色：スペルミスの疑い
+          </span>
         </p>
         <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" onClick={handleSample}>
@@ -114,6 +136,7 @@ export function TextEditor() {
                   key={token.key}
                   token={token}
                   fullText={text}
+                  dictionary={dictionary}
                   isOpen={activeKey === token.key}
                   onOpenChange={(open) => setActiveKey(open ? token.key : null)}
                   onReplace={handleReplace}
@@ -125,9 +148,12 @@ export function TextEditor() {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
-        <span>{text.length} 文字</span>
-        <span>{highlightCount} 件の改善ポイントを検出</span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-neutral-400">
+        <span className="whitespace-nowrap">{text.length} 文字</span>
+        <span className="flex flex-wrap gap-x-3 gap-y-1">
+          <span className="whitespace-nowrap">{highlightCount} 件の改善ポイント</span>
+          <span className="whitespace-nowrap">{typoCount} 件のスペルミスの疑い</span>
+        </span>
       </div>
     </div>
   );

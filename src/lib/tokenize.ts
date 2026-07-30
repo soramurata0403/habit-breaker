@@ -1,4 +1,5 @@
 import { habitRuleMap, type HabitRule } from "@/data/habit-rules";
+import { isUnknownWord } from "@/lib/spellcheck";
 
 export type Token =
   | {
@@ -13,13 +14,17 @@ export type Token =
       start: number;
       end: number;
       rule?: HabitRule;
+      isUnknownWord?: boolean;
     };
 
-export function tokenize(text: string): Token[] {
+const SENTENCE_END_PATTERN = /[.!?]/;
+
+export function tokenize(text: string, dictionary?: Set<string> | null): Token[] {
   const tokens: Token[] = [];
   const wordPattern = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
+  let atSentenceStart = true;
 
   while ((match = wordPattern.exec(text)) !== null) {
     const word = match[0];
@@ -27,22 +32,24 @@ export function tokenize(text: string): Token[] {
     const end = start + word.length;
 
     if (start > lastIndex) {
-      tokens.push({
-        type: "text",
-        key: `t-${lastIndex}`,
-        text: text.slice(lastIndex, start),
-      });
+      const gap = text.slice(lastIndex, start);
+      tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
+      if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
     }
 
+    const rule = habitRuleMap.get(word.toLowerCase());
     tokens.push({
       type: "word",
       key: `w-${start}`,
       text: word,
       start,
       end,
-      rule: habitRuleMap.get(word.toLowerCase()),
+      rule,
+      isUnknownWord:
+        !rule && dictionary ? isUnknownWord(word, atSentenceStart, dictionary) : false,
     });
 
+    atSentenceStart = false;
     lastIndex = end;
   }
 
