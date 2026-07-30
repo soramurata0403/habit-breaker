@@ -1,4 +1,4 @@
-import { habitRuleMap, type Suggestion } from "@/data/habit-rules";
+import { contextualPronouns, habitRuleMap, type Suggestion } from "@/data/habit-rules";
 import { genericSynonymMap } from "@/data/generic-synonyms";
 
 export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown" | "typo-local";
@@ -11,6 +11,7 @@ export type WordInsight = {
   suggestions: Suggestion[];
   isTypo?: boolean;
   suggestedSpelling?: string;
+  isVaguePronoun?: boolean;
 };
 
 function guessPartOfSpeech(word: string): string {
@@ -27,6 +28,7 @@ type ApiSuccessResponse = {
   candidates?: unknown;
   isTypo?: unknown;
   suggestedSpelling?: unknown;
+  isVaguePronoun?: unknown;
 };
 
 function normalizeCandidates(candidates: unknown): Suggestion[] {
@@ -65,7 +67,13 @@ async function fetchFromApi(
     }
 
     const suggestions = normalizeCandidates(data.candidates);
-    if (suggestions.length === 0) return null;
+
+    // we/us/our が「具体的な人物を指す適切な用法」だとAIが確認した場合は、
+    // 言い換え候補が0件でも正常な応答として扱う（言い換えの必要がないため）。
+    const isContextualPronoun = contextualPronouns.has(word.toLowerCase());
+    const isConfirmedFinePronoun = isContextualPronoun && data.isVaguePronoun === false;
+
+    if (suggestions.length === 0 && !isConfirmedFinePronoun) return null;
 
     const isTypo =
       data.isTypo === true &&
@@ -81,6 +89,7 @@ async function fetchFromApi(
       ...(isTypo
         ? { isTypo: true, suggestedSpelling: (data.suggestedSpelling as string).trim() }
         : {}),
+      ...(isContextualPronoun ? { isVaguePronoun: data.isVaguePronoun === true } : {}),
     };
   } catch {
     // ネットワークエラー・タイムアウトなど。呼び出し側でフォールバックする。
@@ -160,6 +169,54 @@ export async function scanTextForContextualTypos(text: string): Promise<Contextu
   } catch (error) {
     console.error("Failed to scan text for contextual typos:", error);
     return [];
+  }
+}
+
+export type PronounOccurrence = {
+  id: number;
+  word: string;
+  sentence: string;
+};
+
+type PronounContextApiResponse = { results?: unknown };
+
+/**
+ * /api/pronoun-context を呼び出し、文章中の we/us/our の各出現箇所について、
+ * 「人々全般」を指す曖昧な用法かどうかをAIに判定させる。
+ * `id` には呼び出し側で単語トークンの開始位置などの安定した識別子を渡す。
+ * ネットワークエラー・APIキー未設定などの場合は空集合を返し、
+ * 呼び出し側は「今回は曖昧な用法なし」として扱えるようにする。
+ */
+export async function checkPronounContext(
+  occurrences: PronounOccurrence[],
+): Promise<Set<number>> {
+  if (occurrences.length === 0) return new Set();
+
+  try {
+    const response = await fetch("/api/pronoun-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ occurrences }),
+    });
+
+    if (!response.ok) return new Set();
+
+    const data = (await response.json()) as PronounContextApiResponse;
+    if (!Array.isArray(data.results)) return new Set();
+
+    const vagueIds = data.results
+      .filter((item): item is { id: number; isVague: boolean } => {
+        if (!item || typeof item !== "object") return false;
+        const r = item as Record<string, unknown>;
+        return typeof r.id === "number" && typeof r.isVague === "boolean";
+      })
+      .filter((item) => item.isVague)
+      .map((item) => item.id);
+
+    return new Set(vagueIds);
+  } catch (error) {
+    console.error("Failed to check pronoun context:", error);
+    return new Set();
   }
 }
 

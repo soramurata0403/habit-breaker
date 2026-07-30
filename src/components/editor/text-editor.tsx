@@ -1,13 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ClipboardPaste, RotateCcw, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { applyAiTypoFlags, tokenize, type AiTypoInfo } from "@/lib/tokenize";
-import { SAMPLE_TEXT } from "@/data/habit-rules";
+import {
+  applyAiTypoFlags,
+  applyPronounContextFlags,
+  getExtendedContext,
+  tokenize,
+  type AiTypoInfo,
+  type Token,
+} from "@/lib/tokenize";
+import { SAMPLE_TEXT, contextualPronouns } from "@/data/habit-rules";
 import { loadDictionary } from "@/lib/spellcheck";
-import { scanTextForContextualTypos } from "@/lib/word-insight";
+import { checkPronounContext, scanTextForContextualTypos } from "@/lib/word-insight";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 
@@ -17,6 +32,12 @@ const MIN_HEIGHT = 224;
 // しないよう、入力が止まってからこの時間が経過するまでスペルチェックの
 // 反映を遅らせる。
 const SPELLCHECK_DEBOUNCE_MS = 900;
+
+// we/us/our の文脈チェックに一度に送る出現数の上限（コスト・応答時間の抑制）。
+const MAX_PRONOUN_OCCURRENCES = 24;
+
+// vagueStarts が未確定の間、毎レンダー新しい Set を作らないための共有インスタンス。
+const EMPTY_STARTS: ReadonlySet<number> = new Set();
 
 // 権限ダイアログが表示されない/応答が返らない環境で貼り付けボタンが
 // 無反応に見えたままにならないよう、待機時間の上限を設ける。
@@ -39,6 +60,13 @@ export function TextEditor() {
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [isPasting, setIsPasting] = useState(false);
   const [aiTypos, setAiTypos] = useState<Map<string, AiTypoInfo>>(new Map());
+  // we/us/our のうち、AIが「曖昧な一般論の主語」と確認した出現箇所（トークンの
+  // start 位置）の集合。position は特定のテキストの状態でのみ意味を持つため、
+  // どのテキストに対する結果かを text と一緒に保持し、一致する場合のみ使う。
+  const [vaguePronouns, setVaguePronouns] = useState<{ text: string; starts: Set<number> }>({
+    text: "",
+    starts: new Set(),
+  });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -100,13 +128,61 @@ export function TextEditor() {
     [],
   );
 
+  // 入力が確定した（＝一定時間止まった）タイミングで、文章中の we/us/our の
+  // 各出現箇所についてAIに文脈判定させる（具体的な人物を指しているか、
+  // 曖昧な一般論の主語かどうか）。タップ前から黄色ハイライトを付けるための処理。
+  useEffect(() => {
+    if (!debouncedText || debouncedText !== text) return;
+    let cancelled = false;
+
+    const pronounTokens = tokenize(debouncedText).filter(
+      (token): token is Extract<Token, { type: "word" }> =>
+        token.type === "word" && contextualPronouns.has(token.text.toLowerCase()),
+    );
+
+    const occurrences = pronounTokens.slice(0, MAX_PRONOUN_OCCURRENCES).map((token) => ({
+      id: token.start,
+      word: token.text,
+      // 先行詞（例: 前文で紹介された人物名）が前文にあるケースにも
+      // 対応できるよう、直前の1文も含めた文脈をAIに渡す。
+      sentence: getExtendedContext(debouncedText, token.start, 1),
+    }));
+
+    // occurrences が空の場合も checkPronounContext は（通信を行わず）即座に
+    // 空集合を返すため、setState は常に then() の中でのみ行われる。
+    checkPronounContext(occurrences).then((vagueIds) => {
+      if (cancelled) return;
+      setVaguePronouns({ text: debouncedText, starts: vagueIds });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedText, text]);
+
+  // クリック時にAI（/api/word-insight）が「曖昧な一般論の主語」と判定した
+  // we/us/our も、以後はリアルタイムに黄色ハイライトへ反映されるようにする。
+  const handleConfirmVaguePronoun = useCallback((position: number, forText: string) => {
+    setVaguePronouns((prev) => {
+      if (prev.text === forText) {
+        if (prev.starts.has(position)) return prev;
+        const next = new Set(prev.starts);
+        next.add(position);
+        return { text: forText, starts: next };
+      }
+      return { text: forText, starts: new Set([position]) };
+    });
+  }, []);
+
   // 入力が確定した（＝一定時間止まった）場合のみ辞書チェックを適用する。
   // まだ確定していない間は dictionary を渡さず、赤色ハイライトの更新を保留する。
   const spellcheckDictionary = debouncedText === text ? dictionary : null;
+  const vagueStarts = vaguePronouns.text === text ? vaguePronouns.starts : EMPTY_STARTS;
   const tokens = useMemo(() => {
     const base = tokenize(text, spellcheckDictionary);
-    return applyAiTypoFlags(base, aiTypos);
-  }, [text, spellcheckDictionary, aiTypos]);
+    const withTypos = applyAiTypoFlags(base, aiTypos);
+    return applyPronounContextFlags(withTypos, vagueStarts);
+  }, [text, spellcheckDictionary, aiTypos, vagueStarts]);
   const highlightCount = useMemo(
     () => tokens.filter((token) => token.type === "word" && token.rule).length,
     [tokens],
@@ -192,6 +268,49 @@ export function TextEditor() {
     textareaRef.current?.focus();
   }
 
+  function renderWordToken(token: Extract<Token, { type: "word" }>) {
+    return (
+      <WordToken
+        key={token.key}
+        token={token}
+        fullText={text}
+        dictionary={dictionary}
+        isOpen={activeKey === token.key}
+        onOpenChange={(open) => setActiveKey(open ? token.key : null)}
+        onReplace={handleReplace}
+        onConfirmAiTypo={handleConfirmAiTypo}
+        onConfirmVaguePronoun={handleConfirmVaguePronoun}
+      />
+    );
+  }
+
+  // 単語トークンの直後に「改行させたくない句読点」（attachedToPrevious）が
+  // 続く場合、両者を1つの whitespace-nowrap な span でまとめて描画することで、
+  // 句読点だけが行末で孤立して次行に落ちるのを防ぐ。
+  function renderTokenNodes(): ReactNode[] {
+    const nodes: ReactNode[] = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (token.type === "word") {
+        const next = tokens[i + 1];
+        if (next && next.type === "text" && next.attachedToPrevious) {
+          nodes.push(
+            <span key={token.key} className="whitespace-nowrap">
+              {renderWordToken(token)}
+              {next.text}
+            </span>,
+          );
+          i++;
+          continue;
+        }
+        nodes.push(renderWordToken(token));
+      } else {
+        nodes.push(<span key={token.key}>{token.text}</span>);
+      }
+    }
+    return nodes;
+  }
+
   return (
     <div className="w-full">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -254,23 +373,7 @@ export function TextEditor() {
             "pointer-events-none absolute inset-0 z-10 border-transparent text-neutral-800",
           )}
         >
-          {text.length > 0 &&
-            tokens.map((token) =>
-              token.type === "word" ? (
-                <WordToken
-                  key={token.key}
-                  token={token}
-                  fullText={text}
-                  dictionary={dictionary}
-                  isOpen={activeKey === token.key}
-                  onOpenChange={(open) => setActiveKey(open ? token.key : null)}
-                  onReplace={handleReplace}
-                  onConfirmAiTypo={handleConfirmAiTypo}
-                />
-              ) : (
-                <span key={token.key}>{token.text}</span>
-              ),
-            )}
+          {text.length > 0 && renderTokenNodes()}
         </div>
       </div>
 

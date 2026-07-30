@@ -1,4 +1,10 @@
-import { habitRuleMap, phraseHabitRules, type HabitRule } from "@/data/habit-rules";
+import {
+  contextualHabitRuleMap,
+  contextualPronouns,
+  habitRuleMap,
+  phraseHabitRules,
+  type HabitRule,
+} from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
 
 export type AiTypoInfo = {
@@ -11,6 +17,9 @@ export type Token =
       type: "text";
       key: string;
       text: string;
+      // 直前の word トークンにくっついたまま改行させたくない句読点
+      // （例: "think" の直後の "."）であることを示すフラグ。
+      attachedToPrevious?: boolean;
     }
   | {
       type: "word";
@@ -19,6 +28,8 @@ export type Token =
       start: number;
       end: number;
       rule?: HabitRule;
+      // rule が「同語の重複使用」判定によって付与された場合の、文章内での出現回数。
+      occurrenceCount?: number;
       isUnknownWord?: boolean;
       isAiTypo?: boolean;
       aiSuggestedSpelling?: string;
@@ -27,6 +38,11 @@ export type Token =
 
 const SENTENCE_END_PATTERN = /[.!?]/;
 const WORD_PATTERN = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+const ATTACHED_PUNCTUATION_PATTERN = /^[.,!?;:]+/;
+
+// think/bad のような基本語は、文章内で2回以上使われて初めて
+// 「重複・多用」とみなしてハイライトする（1回だけの自然な使用はスルーする）。
+const MIN_OCCURRENCES_FOR_HIGHLIGHT = 2;
 
 type Span = { start: number; end: number; text: string; rule?: HabitRule };
 
@@ -75,9 +91,27 @@ function findPhraseSpans(text: string): Span[] {
   return accepted;
 }
 
+/**
+ * コーパスルールに登録された単語（単語1語のもの）が文章内で
+ * それぞれ何回出現しているかを数える（大文字小文字は区別しない）。
+ */
+function countHabitWordOccurrences(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const pattern = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const lower = match[0].toLowerCase();
+    if (habitRuleMap.has(lower)) {
+      counts.set(lower, (counts.get(lower) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export function tokenize(text: string, dictionary?: Set<string> | null): Token[] {
   const tokens: Token[] = [];
   const phraseSpans = findPhraseSpans(text);
+  const wordCounts = countHabitWordOccurrences(text);
   let phraseIndex = 0;
 
   let lastIndex = 0;
@@ -85,12 +119,35 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
   let atSentenceStart = true;
   WORD_PATTERN.lastIndex = 0;
 
+  // 直前の word トークンの直後に空白なしで続く句読点（. , ! ? ; :）は、
+  // 折り返し時にその句読点だけが孤立して次行に落ちないよう、別トークンに
+  // 分けつつ `attachedToPrevious` を立てて描画側で単語とまとめさせる。
   function flushGap(upTo: number) {
-    if (upTo > lastIndex) {
-      const gap = text.slice(lastIndex, upTo);
-      tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
-      if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
+    if (upTo <= lastIndex) return;
+    const gap = text.slice(lastIndex, upTo);
+    const previousIsWord = tokens.length > 0 && tokens[tokens.length - 1].type === "word";
+
+    if (previousIsWord) {
+      const attachedMatch = gap.match(ATTACHED_PUNCTUATION_PATTERN);
+      if (attachedMatch) {
+        const attached = attachedMatch[0];
+        const rest = gap.slice(attached.length);
+        tokens.push({
+          type: "text",
+          key: `t-${lastIndex}`,
+          text: attached,
+          attachedToPrevious: true,
+        });
+        if (rest) {
+          tokens.push({ type: "text", key: `t-${lastIndex + attached.length}`, text: rest });
+        }
+        if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
+        return;
+      }
     }
+
+    tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
+    if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
   }
 
   while ((match = WORD_PATTERN.exec(text)) !== null) {
@@ -127,7 +184,14 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
 
     flushGap(start);
 
-    const rule = habitRuleMap.get(word.toLowerCase());
+    const lower = word.toLowerCase();
+    const candidateRule = habitRuleMap.get(lower);
+    const occurrenceCount = candidateRule ? wordCounts.get(lower) : undefined;
+    const rule =
+      candidateRule && (occurrenceCount ?? 0) >= MIN_OCCURRENCES_FOR_HIGHLIGHT
+        ? candidateRule
+        : undefined;
+
     tokens.push({
       type: "word",
       key: `w-${start}`,
@@ -135,6 +199,7 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
       start,
       end,
       rule,
+      occurrenceCount: rule ? occurrenceCount : undefined,
       isUnknownWord:
         !rule && dictionary ? isUnknownWord(word, atSentenceStart, dictionary) : false,
     });
@@ -143,13 +208,7 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
     lastIndex = end;
   }
 
-  if (lastIndex < text.length) {
-    tokens.push({
-      type: "text",
-      key: `t-${lastIndex}`,
-      text: text.slice(lastIndex),
-    });
-  }
+  flushGap(text.length);
 
   return tokens;
 }
@@ -180,6 +239,29 @@ export function applyAiTypoFlags(
   });
 }
 
+/**
+ * AIが「人々全般を指す曖昧な用法」と確認済みの we/us/our の出現箇所
+ * （トークンの start 位置の集合）を、対応する word トークンに反映する。
+ * 具体的な人物を指すと判断された we/us/our にはハイライトを付けない。
+ */
+export function applyPronounContextFlags(
+  tokens: Token[],
+  vagueStarts: ReadonlySet<number>,
+): Token[] {
+  if (vagueStarts.size === 0) return tokens;
+
+  return tokens.map((token) => {
+    if (token.type !== "word" || token.rule) return token;
+    if (!contextualPronouns.has(token.text.toLowerCase())) return token;
+    if (!vagueStarts.has(token.start)) return token;
+
+    const rule = contextualHabitRuleMap.get(token.text.toLowerCase());
+    if (!rule) return token;
+
+    return { ...token, rule };
+  });
+}
+
 const MAX_CONTEXT_LENGTH = 500;
 
 /**
@@ -205,6 +287,46 @@ export function getContextSentence(text: string, position: number): string {
 
   const remainder = text.slice(sentenceStart).trim();
   return (remainder || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
+}
+
+function getSentenceRanges(text: string): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = [];
+  const boundaryPattern = /[.!?](?:\s+|$)/g;
+  let start = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = boundaryPattern.exec(text)) !== null) {
+    const end = match.index + match[0].length;
+    ranges.push({ start, end });
+    start = end;
+  }
+  if (start < text.length) {
+    ranges.push({ start, end: text.length });
+  }
+  return ranges;
+}
+
+/**
+ * `position` を含む文に加えて、直前の `lookback` 文分の文脈も連結して返す。
+ * 代名詞（we/us/our 等）の先行詞が前の文で紹介されている場合
+ * （例: "...my friend Lehi. As we conversed..."）でも判定できるようにするため。
+ */
+export function getExtendedContext(text: string, position: number, lookback = 1): string {
+  const trimmedFull = text.trim();
+  if (!trimmedFull) return "";
+
+  const ranges = getSentenceRanges(text);
+  if (ranges.length === 0) return trimmedFull.slice(0, MAX_CONTEXT_LENGTH);
+
+  const targetIndex = ranges.findIndex((range) => position < range.end);
+  const effectiveIndex = targetIndex === -1 ? ranges.length - 1 : targetIndex;
+  const startIndex = Math.max(0, effectiveIndex - lookback);
+
+  const rangeStart = ranges[startIndex].start;
+  const rangeEnd = ranges[effectiveIndex].end;
+
+  const context = text.slice(rangeStart, rangeEnd).trim();
+  return (context || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
 }
 
 export function matchCase(source: string, target: string): string {

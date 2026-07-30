@@ -1,3 +1,5 @@
+import { contextualPronouns } from "@/data/habit-rules";
+
 export const runtime = "nodejs";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -11,6 +13,7 @@ type SuccessPayload = {
   candidates: Candidate[];
   isTypo?: boolean | null;
   suggestedSpelling?: string | null;
+  isVaguePronoun?: boolean | null;
 };
 
 const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライティングを指導する英語講師です。
@@ -21,6 +24,7 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライテ�
   "explanation": "対象単語の文脈における使い方についての簡潔な日本語解説（1〜2文）",
   "isTypo": false,
   "suggestedSpelling": null,
+  "isVaguePronoun": false,
   "candidates": [
     { "word": "言い換え単語1", "nuance": "ニュアンスの日本語説明（20文字程度）" },
     { "word": "言い換え単語2", "nuance": "ニュアンスの日本語説明（20文字程度）" },
@@ -36,19 +40,27 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライテ�
 - 対象単語が、文脈上あきらかにスペルミス・タイポである可能性が高い場合（例: "leaned" と書かれているが文脈的に "learned" の誤字だと判断できる場合）は、
   "isTypo" を true にし、"suggestedSpelling" に正しい綴りの単語を1語入れること。
   この場合、candidates は「修正後の正しい単語」を基準にした言い換え候補にすること。
-  スペルミスの疑いがない場合は "isTypo" を false、"suggestedSpelling" を null にすること。`;
+  スペルミスの疑いがない場合は "isTypo" を false、"suggestedSpelling" を null にすること。
+- 対象単語が "we" / "us" / "our" のいずれかである場合は、まず文脈上の使われ方を確認すること:
+  Check if 'we'/'us'/'our' has a specific antecedent (e.g., "my friend and I", "Lehi and I", "my colleague", "my family").
+  If it refers to specific people, this is a perfectly normal, correct usage — set "isVaguePronoun" to false, and in
+  "explanation" state that this usage is fine and no change is needed, with "candidates" as an empty array [].
+  Only set "isVaguePronoun" to true when 'we'/'us'/'our' is used as a vague, general pronoun for people/society/humanity
+  in an academic-essay context (e.g., "We often think that technology..."); in that case provide candidates as usual.
+  対象単語が we/us/our 以外の場合は "isVaguePronoun" を false のままにすること。`;
 
 function buildUserPrompt(word: string, contextSentence: string) {
   return `対象単語: "${word}"\n文脈: "${contextSentence}"\n\nこの文脈における "${word}" の、よりアカデミックな言い換え候補を3つ提案してください。`;
 }
 
-function isSuccessPayload(value: unknown): value is SuccessPayload {
+function isSuccessPayload(value: unknown, allowEmptyCandidates: boolean): value is SuccessPayload {
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
   if (typeof obj.explanation !== "string" || obj.explanation.trim().length === 0) {
     return false;
   }
-  if (!Array.isArray(obj.candidates) || obj.candidates.length === 0) return false;
+  if (!Array.isArray(obj.candidates)) return false;
+  if (obj.candidates.length === 0 && !allowEmptyCandidates) return false;
   const candidatesValid = obj.candidates.every((candidate) => {
     if (!candidate || typeof candidate !== "object") return false;
     const c = candidate as Record<string, unknown>;
@@ -68,6 +80,13 @@ function isSuccessPayload(value: unknown): value is SuccessPayload {
     obj.suggestedSpelling !== undefined &&
     obj.suggestedSpelling !== null &&
     typeof obj.suggestedSpelling !== "string"
+  ) {
+    return false;
+  }
+  if (
+    obj.isVaguePronoun !== undefined &&
+    obj.isVaguePronoun !== null &&
+    typeof obj.isVaguePronoun !== "boolean"
   ) {
     return false;
   }
@@ -155,7 +174,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!isSuccessPayload(parsed)) {
+    const isContextualPronoun = contextualPronouns.has(word.toLowerCase());
+
+    if (!isSuccessPayload(parsed, isContextualPronoun)) {
       console.error("OpenAI JSON content failed shape validation:", parsed);
       return Response.json(
         { error: "AIの応答が期待した形式ではありませんでした。" },
@@ -165,12 +186,14 @@ export async function POST(request: Request) {
 
     const suggestedSpelling = parsed.suggestedSpelling?.trim();
     const isTypo = parsed.isTypo === true && Boolean(suggestedSpelling);
+    const isVaguePronoun = isContextualPronoun ? parsed.isVaguePronoun === true : undefined;
 
     return Response.json(
       {
         explanation: parsed.explanation,
         candidates: parsed.candidates.slice(0, 3),
         ...(isTypo ? { isTypo: true, suggestedSpelling } : {}),
+        ...(isContextualPronoun ? { isVaguePronoun } : {}),
       },
       { status: 200 },
     );

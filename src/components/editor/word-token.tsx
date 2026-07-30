@@ -5,10 +5,10 @@ import * as Popover from "@radix-ui/react-popover";
 import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { getContextSentence, matchCase, type Token } from "@/lib/tokenize";
+import { getContextSentence, getExtendedContext, matchCase, type Token } from "@/lib/tokenize";
 import { suggestCorrections } from "@/lib/spellcheck";
 import { fetchWordInsight, type WordInsight } from "@/lib/word-insight";
-import type { Suggestion } from "@/data/habit-rules";
+import { contextualPronouns, type Suggestion } from "@/data/habit-rules";
 
 type WordTokenProps = {
   token: Extract<Token, { type: "word" }>;
@@ -18,6 +18,7 @@ type WordTokenProps = {
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
   onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
+  onConfirmVaguePronoun: (position: number, forText: string) => void;
 };
 
 export function WordToken({
@@ -28,6 +29,7 @@ export function WordToken({
   onOpenChange,
   onReplace,
   onConfirmAiTypo,
+  onConfirmVaguePronoun,
 }: WordTokenProps) {
   const isHighlighted = Boolean(token.rule);
   const isTypoFlagged = Boolean(token.isUnknownWord) || Boolean(token.isAiTypo);
@@ -74,7 +76,11 @@ export function WordToken({
               badgeLabel="オーバーユース単語"
               badgeClassName="bg-amber-100 text-amber-800"
               headword={token.rule.word}
-              insight={token.rule.insight}
+              insight={
+                token.occurrenceCount
+                  ? `"${token.rule.word}" がこの文章内で${token.occurrenceCount}回使われています。語彙のバリエーションを増やすために、以下の言い換えを検討してみましょう。`
+                  : token.rule.insight
+              }
               suggestions={token.rule.suggestions}
               onPick={handlePick}
             />
@@ -91,6 +97,7 @@ export function WordToken({
               dictionary={dictionary}
               onPick={handlePick}
               onConfirmAiTypo={onConfirmAiTypo}
+              onConfirmVaguePronoun={onConfirmVaguePronoun}
             />
           )}
           <Popover.Arrow className="fill-white" width={14} height={7} />
@@ -128,6 +135,7 @@ function DynamicInsight({
   dictionary,
   onPick,
   onConfirmAiTypo,
+  onConfirmVaguePronoun,
 }: {
   isOpen: boolean;
   word: string;
@@ -140,6 +148,7 @@ function DynamicInsight({
   dictionary: Set<string> | null;
   onPick: (replacement: string) => void;
   onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
+  onConfirmVaguePronoun: (position: number, forText: string) => void;
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
 
@@ -178,7 +187,11 @@ function DynamicInsight({
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    const contextSentence = getContextSentence(fullText, start);
+    // we/us/our は先行詞（例: 前文で紹介された人物名）が前文にあることが
+    // 多いため、直前の1文も含めた文脈をAIに渡す。それ以外は現在の文のみ。
+    const contextSentence = contextualPronouns.has(word.toLowerCase())
+      ? getExtendedContext(fullText, start, 1)
+      : getContextSentence(fullText, start);
     fetchWordInsight(word, contextSentence).then((result) => {
       if (cancelled) return;
       // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
@@ -202,6 +215,12 @@ function DynamicInsight({
       if (result.isTypo && result.suggestedSpelling) {
         onConfirmAiTypo(word, result.suggestedSpelling, result.insight);
       }
+      // we/us/our について、クリックして初めてAIが「曖昧な一般論の主語」と
+      // 判定した場合も、以後は文章全体でリアルタイムに黄色ハイライトへ
+      // 反映されるようにする（具体的な人物を指すと判定された場合は何もしない）。
+      if (result.isVaguePronoun === true) {
+        onConfirmVaguePronoun(start, fullText);
+      }
     });
     return () => {
       cancelled = true;
@@ -213,6 +232,7 @@ function DynamicInsight({
     fullText,
     isTypoFlagged,
     onConfirmAiTypo,
+    onConfirmVaguePronoun,
     confirmedSuggestedSpelling,
   ]);
 
@@ -244,7 +264,13 @@ function DynamicInsight({
       insight={resolved.insight}
       suggestions={resolved.suggestions}
       onPick={onPick}
-      emptyMessage="この単語にはまだ言い換え候補がありません。"
+      emptyMessage={
+        // we/us/our が「具体的な人物を指す適切な用法」と確認された場合は、
+        // 解説文自体がその旨を説明しているため、汎用の空メッセージは表示しない。
+        resolved.isVaguePronoun === false
+          ? undefined
+          : "この単語にはまだ言い換え候補がありません。"
+      }
       isTypo={resolved.isTypo}
       suggestedSpelling={resolved.suggestedSpelling}
     />

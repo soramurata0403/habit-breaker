@@ -33,11 +33,31 @@ export const habitRules: HabitRule[] = [
   {
     word: "we",
     insight:
-      "スピーチやエッセイで主語をweにするのは日本人特有の集団化の癖です（ネイティブの4〜8倍）。より具体的・客観的な名詞を使いましょう。",
+      "「人々全般」や「社会」を指す抽象的な主語としてweを使うのは日本人特有の集団化の癖です（ネイティブの4〜8倍）。より具体的・客観的な主語を使いましょう。",
     suggestions: [
       { word: "students", nuance: "学生一般を指す" },
       { word: "individuals", nuance: "個々の人々・個人" },
       { word: "society", nuance: "社会全体を指す" },
+    ],
+  },
+  {
+    word: "us",
+    insight:
+      "usも同様に、具体的な対象を指さず「人々全般」を意味する曖昧な目的語として使われがちです。より具体的な語に言い換えましょう。",
+    suggestions: [
+      { word: "individuals", nuance: "個々の人々・個人" },
+      { word: "people", nuance: "人々" },
+      { word: "society", nuance: "社会全体（目的語として）" },
+    ],
+  },
+  {
+    word: "our",
+    insight:
+      "ourも同様に、具体的な対象を指さない曖昧な所有格として使われがちです。より具体的な語に言い換えましょう。",
+    suggestions: [
+      { word: "people's", nuance: "人々の（所有格）" },
+      { word: "society's", nuance: "社会の（所有格）" },
+      { word: "individuals'", nuance: "個人の（所有格）" },
     ],
   },
   {
@@ -222,10 +242,24 @@ export const habitRules: HabitRule[] = [
   },
 ];
 
-// 単語1語のルール（トークナイザが単語ごとに参照する）。
+// we/us/our は単語単体では機械的に判定できず、AIによる文脈判定
+// （具体的な人物を指しているか、曖昧な一般論の主語かの判定）が
+// 必要なため、通常の単語ルールとは別に扱う。
+export const contextualPronouns: ReadonlySet<string> = new Set(["we", "us", "our"]);
+
+// 単語1語のルール（トークナイザが単語ごとに参照する）。we/us/our は
+// 文脈判定が確定するまでは自動でハイライトしないため除外する。
 export const habitRuleMap: Map<string, HabitRule> = new Map(
   habitRules
-    .filter((rule) => !rule.word.includes(" "))
+    .filter((rule) => !rule.word.includes(" ") && !contextualPronouns.has(rule.word))
+    .map((rule) => [rule.word.toLowerCase(), rule]),
+);
+
+// we/us/our のルール。AIが「曖昧な一般論の主語」と確認した場合にのみ
+// トークナイザ側でハイライトへ反映する（src/lib/tokenize.ts 参照）。
+export const contextualHabitRuleMap: Map<string, HabitRule> = new Map(
+  habitRules
+    .filter((rule) => contextualPronouns.has(rule.word))
     .map((rule) => [rule.word.toLowerCase(), rule]),
 );
 
@@ -236,4 +270,4 @@ export const phraseHabitRules: HabitRule[] = habitRules.filter((rule) =>
 );
 
 export const SAMPLE_TEXT =
-  "I think this policy is bad because we cannot save money. So we should change it.";
+  "I think this policy is bad. I think it is bad because we cannot save money. So we should change it, and we must act now.";
