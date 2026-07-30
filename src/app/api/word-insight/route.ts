@@ -6,7 +6,12 @@ const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONTEXT_LENGTH = 500;
 
 type Candidate = { word: string; nuance: string };
-type SuccessPayload = { explanation: string; candidates: Candidate[] };
+type SuccessPayload = {
+  explanation: string;
+  candidates: Candidate[];
+  isTypo?: boolean | null;
+  suggestedSpelling?: string | null;
+};
 
 const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライティングを指導する英語講師です。
 与えられた「対象単語」と、それが使われている「文脈」をもとに、より洗練されたアカデミックな同義語を3つ提案してください。
@@ -14,6 +19,8 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライテ�
 必ず以下のJSON形式のみで出力してください（前後に説明文や余計なテキストを含めないこと）:
 {
   "explanation": "対象単語の文脈における使い方についての簡潔な日本語解説（1〜2文）",
+  "isTypo": false,
+  "suggestedSpelling": null,
   "candidates": [
     { "word": "言い換え単語1", "nuance": "ニュアンスの日本語説明（20文字程度）" },
     { "word": "言い換え単語2", "nuance": "ニュアンスの日本語説明（20文字程度）" },
@@ -25,7 +32,11 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライテ�
 - candidates は与えられた文脈に自然に当てはまる語のみを3つ提案すること
 - 口語的すぎる表現は避け、TOEFL/IELTSのエッセイで違和感のないフォーマルな語彙を選ぶこと
 - explanation と nuance は日本語で書くこと
-- word には元の単語と同じ品詞・時制・活用形に近い形の英単語を1語（またはごく短い句）で入れること`;
+- word には元の単語と同じ品詞・時制・活用形に近い形の英単語を1語（またはごく短い句）で入れること
+- 対象単語が、文脈上あきらかにスペルミス・タイポである可能性が高い場合（例: "leaned" と書かれているが文脈的に "learned" の誤字だと判断できる場合）は、
+  "isTypo" を true にし、"suggestedSpelling" に正しい綴りの単語を1語入れること。
+  この場合、candidates は「修正後の正しい単語」を基準にした言い換え候補にすること。
+  スペルミスの疑いがない場合は "isTypo" を false、"suggestedSpelling" を null にすること。`;
 
 function buildUserPrompt(word: string, contextSentence: string) {
   return `対象単語: "${word}"\n文脈: "${contextSentence}"\n\nこの文脈における "${word}" の、よりアカデミックな言い換え候補を3つ提案してください。`;
@@ -38,7 +49,7 @@ function isSuccessPayload(value: unknown): value is SuccessPayload {
     return false;
   }
   if (!Array.isArray(obj.candidates) || obj.candidates.length === 0) return false;
-  return obj.candidates.every((candidate) => {
+  const candidatesValid = obj.candidates.every((candidate) => {
     if (!candidate || typeof candidate !== "object") return false;
     const c = candidate as Record<string, unknown>;
     return (
@@ -48,6 +59,20 @@ function isSuccessPayload(value: unknown): value is SuccessPayload {
       c.nuance.trim().length > 0
     );
   });
+  if (!candidatesValid) return false;
+
+  if (obj.isTypo !== undefined && obj.isTypo !== null && typeof obj.isTypo !== "boolean") {
+    return false;
+  }
+  if (
+    obj.suggestedSpelling !== undefined &&
+    obj.suggestedSpelling !== null &&
+    typeof obj.suggestedSpelling !== "string"
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export async function POST(request: Request) {
@@ -138,10 +163,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const suggestedSpelling = parsed.suggestedSpelling?.trim();
+    const isTypo = parsed.isTypo === true && Boolean(suggestedSpelling);
+
     return Response.json(
       {
         explanation: parsed.explanation,
         candidates: parsed.candidates.slice(0, 3),
+        ...(isTypo ? { isTypo: true, suggestedSpelling } : {}),
       },
       { status: 200 },
     );

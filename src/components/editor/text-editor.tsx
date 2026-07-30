@@ -11,8 +11,14 @@ import { WordToken } from "./word-token";
 
 const MIN_HEIGHT = 224;
 
+// textarea とハイライト表示用オーバーレイの文字位置を完全に一致させるため、
+// フォント・行間・字間・改行規則・パディング・ボーダー幅・box-sizing を
+// 1文字たりとも変えずに両者へ適用する共有クラス。
+// `block` は必須: <textarea> は既定で display:inline-block のため、
+// 指定しないと行ボックスの余白（ベースライン揃えの隙間）分だけ
+// 高さがオーバーレイ側とズレてしまう。
 const SHARED_BOX_CLASSES =
-  "w-full rounded-2xl border-2 px-6 py-5 text-lg leading-8 font-sans whitespace-pre-wrap break-words";
+  "block w-full rounded-2xl border-2 px-6 py-5 text-lg leading-8 tracking-normal font-sans whitespace-pre-wrap break-words [word-break:normal] [box-sizing:border-box]";
 
 export function TextEditor() {
   const [text, setText] = useState("");
@@ -28,8 +34,20 @@ export function TextEditor() {
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.max(el.scrollHeight, MIN_HEIGHT)}px`;
+
+    function adjustHeight() {
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.max(el.scrollHeight, MIN_HEIGHT)}px`;
+    }
+
+    adjustHeight();
+
+    // 折り返し幅が変わる（＝ウィンドウ幅の変化など）と行数が変わり、
+    // テキストエリアとオーバーレイの高さがズレるため、幅の変化にも追従させる。
+    const resizeObserver = new ResizeObserver(adjustHeight);
+    resizeObserver.observe(el);
+    return () => resizeObserver.disconnect();
   }, [text]);
 
   function handleReplace(start: number, end: number, replacement: string) {

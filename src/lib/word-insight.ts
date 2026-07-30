@@ -9,6 +9,8 @@ export type WordInsight = {
   badgeLabel: string;
   insight: string;
   suggestions: Suggestion[];
+  isTypo?: boolean;
+  suggestedSpelling?: string;
 };
 
 function guessPartOfSpeech(word: string): string {
@@ -20,7 +22,12 @@ function guessPartOfSpeech(word: string): string {
 }
 
 type ApiCandidate = { word?: unknown; nuance?: unknown };
-type ApiSuccessResponse = { explanation?: unknown; candidates?: unknown };
+type ApiSuccessResponse = {
+  explanation?: unknown;
+  candidates?: unknown;
+  isTypo?: unknown;
+  suggestedSpelling?: unknown;
+};
 
 function normalizeCandidates(candidates: unknown): Suggestion[] {
   if (!Array.isArray(candidates)) return [];
@@ -60,12 +67,20 @@ async function fetchFromApi(
     const suggestions = normalizeCandidates(data.candidates);
     if (suggestions.length === 0) return null;
 
+    const isTypo =
+      data.isTypo === true &&
+      typeof data.suggestedSpelling === "string" &&
+      data.suggestedSpelling.trim().length > 0;
+
     return {
       word,
       source: "ai",
       badgeLabel: "AIによる解説",
       insight: data.explanation,
       suggestions,
+      ...(isTypo
+        ? { isTypo: true, suggestedSpelling: (data.suggestedSpelling as string).trim() }
+        : {}),
     };
   } catch {
     // ネットワークエラー・タイムアウトなど。呼び出し側でフォールバックする。

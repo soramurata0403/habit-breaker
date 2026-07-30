@@ -1,7 +1,6 @@
 import { BookOpenCheck } from "lucide-react";
 
 import { TextEditor } from "@/components/editor/text-editor";
-import { habitRules } from "@/data/habit-rules";
 
 export default function Home() {
   return (
@@ -25,18 +24,6 @@ export default function Home() {
         <main className="rounded-3xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur-sm sm:p-8">
           <TextEditor />
         </main>
-
-        <section className="mt-6 flex flex-wrap items-center justify-center gap-2">
-          <span className="text-xs font-medium text-neutral-400">検出対象の癖：</span>
-          {habitRules.map((rule) => (
-            <span
-              key={rule.word}
-              className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700"
-            >
-              {rule.word}
-            </span>
-          ))}
-        </section>
 
         <footer className="mt-10 text-center text-xs text-neutral-400">
           MVP prototype — コーパスルールはシードデータとして静的に組み込まれています。

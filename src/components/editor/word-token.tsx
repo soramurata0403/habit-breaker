@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { getContextSentence, matchCase, type Token } from "@/lib/tokenize";
@@ -36,7 +36,9 @@ export function WordToken({
         <button
           type="button"
           className={cn(
-            "pointer-events-auto rounded px-0.5 transition-colors",
+            // padding/margin/border は一切持たせない: textarea 側の文字幅と
+            // 完全に一致させるため（背景色・ring は box-shadow ベースでレイアウトに影響しない）。
+            "pointer-events-auto m-0 rounded border-0 p-0 align-baseline transition-colors",
             isHighlighted
               ? cn(
                   "bg-amber-100/80 underline decoration-amber-500 decoration-2 decoration-dotted underline-offset-4 hover:bg-amber-200/80",
@@ -135,6 +137,8 @@ function DynamicInsight({
       suggestions={insight.suggestions}
       onPick={onPick}
       emptyMessage="この単語にはまだ言い換え候補がありません。"
+      isTypo={insight.isTypo}
+      suggestedSpelling={insight.suggestedSpelling}
     />
   );
 }
@@ -147,6 +151,8 @@ function InsightCard({
   suggestions,
   onPick,
   emptyMessage,
+  isTypo,
+  suggestedSpelling,
 }: {
   badgeLabel: string;
   badgeClassName: string;
@@ -155,9 +161,26 @@ function InsightCard({
   suggestions: Suggestion[];
   onPick: (replacement: string) => void;
   emptyMessage?: string;
+  isTypo?: boolean;
+  suggestedSpelling?: string;
 }) {
   return (
     <div>
+      {isTypo && suggestedSpelling && (
+        <button
+          type="button"
+          onClick={() => onPick(suggestedSpelling)}
+          className="mb-3 flex w-full items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left transition-colors hover:border-amber-400 hover:bg-amber-100"
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
+            <TriangleAlert className="h-4 w-4 shrink-0" />
+            スペルミスの可能性があります: &quot;{suggestedSpelling}&quot;
+          </span>
+          <span className="shrink-0 rounded-md bg-amber-600 px-2 py-1 text-xs font-semibold text-white">
+            修正する
+          </span>
+        </button>
+      )}
       <div className="mb-2 flex items-center gap-2">
         <span
           className={cn(
