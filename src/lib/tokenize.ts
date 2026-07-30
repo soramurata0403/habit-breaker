@@ -12,7 +12,7 @@ export type Token =
       text: string;
       start: number;
       end: number;
-      rule: HabitRule;
+      rule?: HabitRule;
     };
 
 export function tokenize(text: string): Token[] {
@@ -34,12 +34,14 @@ export function tokenize(text: string): Token[] {
       });
     }
 
-    const rule = habitRuleMap.get(word.toLowerCase());
-    tokens.push(
-      rule
-        ? { type: "word", key: `w-${start}`, text: word, start, end, rule }
-        : { type: "text", key: `t-${start}`, text: word },
-    );
+    tokens.push({
+      type: "word",
+      key: `w-${start}`,
+      text: word,
+      start,
+      end,
+      rule: habitRuleMap.get(word.toLowerCase()),
+    });
 
     lastIndex = end;
   }

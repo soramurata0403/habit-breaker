@@ -21,7 +21,7 @@ export function TextEditor() {
 
   const tokens = useMemo(() => tokenize(text), [text]);
   const highlightCount = useMemo(
-    () => tokens.filter((token) => token.type === "word").length,
+    () => tokens.filter((token) => token.type === "word" && token.rule).length,
     [tokens],
   );
 
@@ -54,9 +54,9 @@ export function TextEditor() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="flex items-center gap-1.5 text-sm text-neutral-500">
           <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
-          ハイライトされた単語をクリックすると言い換え候補が表示されます
+          単語をクリックすると言い換え候補が表示されます（黄色は特に注意すべき癖のある単語）
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button type="button" size="sm" onClick={handleSample}>
             <Sparkles className="h-4 w-4" />
             サンプル文章をセット
