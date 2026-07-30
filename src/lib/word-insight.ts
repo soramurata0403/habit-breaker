@@ -1,7 +1,7 @@
 import { habitRuleMap, type Suggestion } from "@/data/habit-rules";
 import { genericSynonymMap } from "@/data/generic-synonyms";
 
-export type WordInsightSource = "corpus" | "generic" | "unknown";
+export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown";
 
 export type WordInsight = {
   word: string;
@@ -19,35 +19,61 @@ function guessPartOfSpeech(word: string): string {
   return "単語";
 }
 
-function delay(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+type ApiCandidate = { word?: unknown; nuance?: unknown };
+type ApiSuccessResponse = { explanation?: unknown; candidates?: unknown };
+
+function normalizeCandidates(candidates: unknown): Suggestion[] {
+  if (!Array.isArray(candidates)) return [];
+  return candidates
+    .filter((candidate): candidate is { word: string; nuance: string } => {
+      if (!candidate || typeof candidate !== "object") return false;
+      const c = candidate as ApiCandidate;
+      return typeof c.word === "string" && typeof c.nuance === "string";
+    })
+    .map((candidate) => ({ word: candidate.word, nuance: candidate.nuance }));
 }
 
 /**
- * 単語ごとの解説・言い換え候補を取得するフック。
- *
- * 優先順位: コーパスルール（静的シードデータ）→ 汎用シノニム辞書 → 未登録。
- * 実プロダクトでは、このコーパスルール以外の分岐（generic / unknown）を
- * 外部の類語辞書API・LLM呼び出しに差し替えることを想定している。
- * ここでは疑似的なネットワーク遅延を挟んだモック実装としている。
+ * /api/word-insight（gpt-4o-miniによるリアルタイム生成）を呼び出す。
+ * ネットワークエラー・APIキー未設定・不正なレスポンスなど、
+ * 何らかの理由で取得できなかった場合は null を返し、呼び出し側で
+ * ローカルフォールバックに切り替えられるようにする。
  */
-export async function fetchWordInsight(rawWord: string): Promise<WordInsight> {
-  const word = rawWord.toLowerCase();
+async function fetchFromApi(
+  word: string,
+  contextSentence: string,
+): Promise<WordInsight | null> {
+  try {
+    const response = await fetch("/api/word-insight", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ word, contextSentence }),
+    });
 
-  const corpusRule = habitRuleMap.get(word);
-  if (corpusRule) {
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as ApiSuccessResponse;
+    if (typeof data.explanation !== "string" || data.explanation.trim().length === 0) {
+      return null;
+    }
+
+    const suggestions = normalizeCandidates(data.candidates);
+    if (suggestions.length === 0) return null;
+
     return {
-      word: corpusRule.word,
-      source: "corpus",
-      badgeLabel: "オーバーユース単語",
-      insight: corpusRule.insight,
-      suggestions: corpusRule.suggestions,
+      word,
+      source: "ai",
+      badgeLabel: "AIによる解説",
+      insight: data.explanation,
+      suggestions,
     };
+  } catch {
+    // ネットワークエラー・タイムアウトなど。呼び出し側でフォールバックする。
+    return null;
   }
+}
 
-  // TODO: 実運用では、ここを言い換え辞書API・LLM呼び出しに置き換える。
-  await delay(350);
-
+function localFallback(rawWord: string, word: string): WordInsight {
   const genericSuggestions = genericSynonymMap.get(word);
   if (genericSuggestions) {
     return {
@@ -65,7 +91,38 @@ export async function fetchWordInsight(rawWord: string): Promise<WordInsight> {
     word,
     source: "unknown",
     badgeLabel: "データ準備中",
-    insight: `"${rawWord}" はまだ辞書に登録されていません。今後はAPI / LLM連携により、文脈に応じた解説と言い換え候補をリアルタイムに生成する予定です。`,
+    insight: `"${rawWord}" の解説を取得できませんでした。AI連携が利用できない可能性があります。しばらくしてからもう一度お試しください。`,
     suggestions: [],
   };
+}
+
+/**
+ * 単語ごとの解説・言い換え候補を取得するフック。
+ *
+ * 優先順位:
+ *   1. コーパスルール（静的シードデータ）— 通信不要で即座に返す
+ *   2. /api/word-insight（gpt-4o-miniによる文脈に応じたリアルタイム生成）
+ *   3. ローカル汎用辞書 → 「データ準備中」表示（APIキー未設定・通信エラー時の安全なフォールバック）
+ */
+export async function fetchWordInsight(
+  rawWord: string,
+  contextSentence?: string,
+): Promise<WordInsight> {
+  const word = rawWord.toLowerCase();
+
+  const corpusRule = habitRuleMap.get(word);
+  if (corpusRule) {
+    return {
+      word: corpusRule.word,
+      source: "corpus",
+      badgeLabel: "オーバーユース単語",
+      insight: corpusRule.insight,
+      suggestions: corpusRule.suggestions,
+    };
+  }
+
+  const aiInsight = await fetchFromApi(rawWord, contextSentence?.trim() || rawWord);
+  if (aiInsight) return aiInsight;
+
+  return localFallback(rawWord, word);
 }

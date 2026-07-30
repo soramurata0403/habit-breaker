@@ -5,18 +5,25 @@ import * as Popover from "@radix-ui/react-popover";
 import { ArrowRight, Loader2, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { matchCase, type Token } from "@/lib/tokenize";
+import { getContextSentence, matchCase, type Token } from "@/lib/tokenize";
 import { fetchWordInsight, type WordInsight } from "@/lib/word-insight";
 import type { Suggestion } from "@/data/habit-rules";
 
 type WordTokenProps = {
   token: Extract<Token, { type: "word" }>;
+  fullText: string;
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
 };
 
-export function WordToken({ token, isOpen, onOpenChange, onReplace }: WordTokenProps) {
+export function WordToken({
+  token,
+  fullText,
+  isOpen,
+  onOpenChange,
+  onReplace,
+}: WordTokenProps) {
   const isHighlighted = Boolean(token.rule);
 
   function handlePick(replacement: string) {
@@ -62,7 +69,13 @@ export function WordToken({ token, isOpen, onOpenChange, onReplace }: WordTokenP
               onPick={handlePick}
             />
           ) : (
-            <DynamicInsight isOpen={isOpen} word={token.text} onPick={handlePick} />
+            <DynamicInsight
+              isOpen={isOpen}
+              word={token.text}
+              start={token.start}
+              fullText={fullText}
+              onPick={handlePick}
+            />
           )}
           <Popover.Arrow className="fill-white" width={14} height={7} />
         </Popover.Content>
@@ -74,10 +87,14 @@ export function WordToken({ token, isOpen, onOpenChange, onReplace }: WordTokenP
 function DynamicInsight({
   isOpen,
   word,
+  start,
+  fullText,
   onPick,
 }: {
   isOpen: boolean;
   word: string;
+  start: number;
+  fullText: string;
   onPick: (replacement: string) => void;
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
@@ -85,19 +102,20 @@ function DynamicInsight({
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
-    fetchWordInsight(word).then((result) => {
+    const contextSentence = getContextSentence(fullText, start);
+    fetchWordInsight(word, contextSentence).then((result) => {
       if (!cancelled) setInsight(result);
     });
     return () => {
       cancelled = true;
     };
-  }, [isOpen, word]);
+  }, [isOpen, word, start, fullText]);
 
   if (!insight || insight.word !== word.toLowerCase()) {
     return (
       <div className="flex items-center gap-2 py-6 text-sm text-neutral-400">
         <Loader2 className="h-4 w-4 animate-spin" />
-        解析中...
+        AIが文脈を解析中...
       </div>
     );
   }
@@ -106,9 +124,11 @@ function DynamicInsight({
     <InsightCard
       badgeLabel={insight.badgeLabel}
       badgeClassName={
-        insight.source === "generic"
-          ? "bg-teal-100 text-teal-800"
-          : "bg-neutral-100 text-neutral-500"
+        insight.source === "ai"
+          ? "bg-indigo-100 text-indigo-800"
+          : insight.source === "generic"
+            ? "bg-teal-100 text-teal-800"
+            : "bg-neutral-100 text-neutral-500"
       }
       headword={insight.word}
       insight={insight.insight}

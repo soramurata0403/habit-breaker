@@ -95,6 +95,7 @@ export function TextEditor() {
                 <WordToken
                   key={token.key}
                   token={token}
+                  fullText={text}
                   isOpen={activeKey === token.key}
                   onOpenChange={(open) => setActiveKey(open ? token.key : null)}
                   onReplace={handleReplace}
