@@ -108,8 +108,11 @@ export function TextEditor() {
   const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
   const lastAnalysisAtRef = useRef(0);
-  // 直前に解析した本文（正規化済み）。空白だけの変化では再解析しないための比較用。
+  // 最後にAPI解析が成功した本文（正規化済み）。空白だけの変化や、
+  // クリック・フォーカスによる再評価では再解析しないための比較用。
   const lastAnalyzedRef = useRef("");
+  // 現在リクエスト中の本文（正規化済み）。同じ内容を二重に送らないためのガード。
+  const inFlightRef = useRef("");
   // 解析済みの本文 → we/us/our の判定結果。Undo/Redo などで同じ本文に
   // 戻ったとき、APIを叩き直さずに復元するためのセッション内キャッシュ。
   const analysisCacheRef = useRef(new Map<string, Set<number>>());
@@ -167,8 +170,11 @@ export function TextEditor() {
     if (isExhausted || isOverLength) return;
 
     // 空白・改行だけの変化では解析しない。空白のみの本文も対象外。
+    // 解析成功済み・送信中の内容と同一なら、何が再評価のきっかけであっても
+    // ここで打ち切る（クリックやフォーカス移動では通信しない）。
     const normalized = normalizeForAnalysis(analysisText);
-    if (!normalized || normalized === lastAnalyzedRef.current) return;
+    if (!normalized) return;
+    if (normalized === lastAnalyzedRef.current || normalized === inFlightRef.current) return;
 
     let cancelled = false;
 
@@ -188,8 +194,13 @@ export function TextEditor() {
         return;
       }
 
+      // 送信直前の最終ガード。既に解析成功済み、または同じ内容を送信中の
+      // 場合はここでリクエストを取りやめる（クリック・フォーカス等で
+      // 再評価が走っても、本文が変わっていなければ通信しない）。
+      if (normalized === lastAnalyzedRef.current || normalized === inFlightRef.current) return;
+
       lastAnalysisAtRef.current = Date.now();
-      lastAnalyzedRef.current = normalized;
+      inFlightRef.current = normalized;
 
       // 利用回数は「実際にリクエストを送り、正常な応答を受け取った」場合のみ
       // 消費する。1回の解析で2本のAPIが飛ぶため、消費は1回にまとめる。
@@ -198,10 +209,21 @@ export function TextEditor() {
         if (counted) return;
         counted = true;
         consumeRequest();
+        // 「最後にAPI解析に成功した本文」として記録する。失敗時は更新しない
+        // ため、次のきっかけで再試行できる。
+        lastAnalyzedRef.current = normalized;
+      };
+
+      let settled = 0;
+      const markSettled = () => {
+        if (++settled === 2 && inFlightRef.current === normalized) {
+          inFlightRef.current = "";
+        }
       };
 
       scanTextForContextualTypos(analysisText).then(({ didRequest, typos }) => {
         if (didRequest) countOnce();
+        markSettled();
         if (cancelled || typos.length === 0) return;
         setAiTypos((prev) => {
           const next = new Map(prev);
@@ -237,6 +259,7 @@ export function TextEditor() {
       // 論説文かのトーン判定も行われる。
       checkPronounContext(occurrences, analysisText).then(({ didRequest, vagueIds }) => {
         if (didRequest) countOnce();
+        markSettled();
 
         const cache = analysisCacheRef.current;
         cache.set(analysisText, vagueIds);

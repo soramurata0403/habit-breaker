@@ -42,6 +42,16 @@ export function WordToken({
   const isHighlighted = Boolean(token.rule);
   const isTypoFlagged = Boolean(token.isUnknownWord) || Boolean(token.isAiTypo);
 
+  // ハイライト対象（黄色・赤色）の単語だけをクリック可能にする。
+  // 指摘のない単語までボタンにしていると、本文中をクリックして
+  // カーソルを移動しただけでポップオーバーが開き、解説APIが呼ばれて
+  // 利用回数が減ってしまう。素のテキストとして描画しておけば、
+  // オーバーレイは pointer-events: none なのでクリックはそのまま
+  // 下の textarea に届き、通常どおりカーソル移動になる。
+  if (!isHighlighted && !isTypoFlagged) {
+    return <span>{token.text}</span>;
+  }
+
   function handlePick(replacement: string) {
     onReplace(token.start, token.end, matchCase(token.text, replacement));
   }
