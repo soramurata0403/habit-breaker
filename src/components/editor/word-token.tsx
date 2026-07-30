@@ -9,7 +9,7 @@ import { getContextSentence, getExtendedContext, matchCase, type Token } from "@
 import { suggestCorrections } from "@/lib/spellcheck";
 import { fetchWordInsight, requiresApiCall, type WordInsight } from "@/lib/word-insight";
 import { contextualPronouns, type Suggestion } from "@/data/habit-rules";
-import { MAX_DAILY_REQUESTS, MAX_TEXT_LENGTH } from "@/lib/config";
+import { DAILY_LIMIT_MESSAGE, MAX_TEXT_LENGTH } from "@/lib/config";
 import { consumeRequest } from "@/lib/usage-store";
 
 type WordTokenProps = {
@@ -294,7 +294,7 @@ function DynamicInsight({
         <p className="text-sm leading-relaxed text-neutral-600">
           {isOverLength
             ? `解析できるのは${MAX_TEXT_LENGTH}文字までです。文字数を減らすと解説を表示できます。`
-            : `本日の無料利用枠（${MAX_DAILY_REQUESTS}回）に達しました。明日またお試しください。`}
+            : DAILY_LIMIT_MESSAGE}
         </p>
       </div>
     );

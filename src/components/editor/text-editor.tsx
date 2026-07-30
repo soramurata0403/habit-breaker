@@ -24,7 +24,13 @@ import { SAMPLE_TEXT, contextualPronouns } from "@/data/habit-rules";
 import { loadDictionary } from "@/lib/spellcheck";
 import { checkPronounContext, scanTextForContextualTypos } from "@/lib/word-insight";
 import { buildIssueItems } from "@/lib/issue-list";
-import { COOLDOWN_MS, MAX_DAILY_REQUESTS, MAX_TEXT_LENGTH } from "@/lib/config";
+import {
+  COOLDOWN_MS,
+  DAILY_LIMIT_MESSAGE,
+  LOW_REMAINING_THRESHOLD,
+  MAX_DAILY_REQUESTS,
+  MAX_TEXT_LENGTH,
+} from "@/lib/config";
 import { consumeRequest, useUsageLimit } from "@/lib/usage-store";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
@@ -86,7 +92,7 @@ export function TextEditor() {
   // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
   const lastAnalysisAtRef = useRef(0);
 
-  const { used, remaining, isExhausted } = useUsageLimit();
+  const { remaining, isExhausted } = useUsageLimit();
   const isOverLength = text.length > MAX_TEXT_LENGTH;
 
   useEffect(() => {
@@ -453,7 +459,7 @@ export function TextEditor() {
 
         {isExhausted && !isOverLength && (
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-            本日の無料利用枠（{MAX_DAILY_REQUESTS}回）に達しました。明日またお試しください。
+            {DAILY_LIMIT_MESSAGE}
           </p>
         )}
 
@@ -467,8 +473,27 @@ export function TextEditor() {
             >
               {text.length} / {MAX_TEXT_LENGTH} 文字
             </span>
-            <span className="text-xs whitespace-nowrap text-neutral-400">
-              本日の解析 {used} / {MAX_DAILY_REQUESTS} 回（残り {remaining} 回）
+            {/* 残り回数はひと目で分かるようバッジ表示にし、残りわずか／上限到達で
+                色が変わるようにする（通常=グレー、残りわずか=黄、上限到達=赤）。 */}
+            <span
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium whitespace-nowrap",
+                isExhausted
+                  ? "bg-red-100 text-red-900"
+                  : remaining <= LOW_REMAINING_THRESHOLD
+                    ? "bg-amber-100 text-amber-900"
+                    : "bg-neutral-100 text-neutral-600",
+              )}
+            >
+              {isExhausted ? (
+                <>本日の解析上限に到達（{MAX_DAILY_REQUESTS} / {MAX_DAILY_REQUESTS} 回）</>
+              ) : (
+                <>
+                  本日の解析 残り
+                  <span className="text-sm font-bold">{remaining}</span>／
+                  {MAX_DAILY_REQUESTS} 回
+                </>
+              )}
             </span>
           </span>
           <span className="flex flex-wrap gap-2">

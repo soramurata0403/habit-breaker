@@ -3,15 +3,24 @@
  * サーバー・クライアント双方から読み込むため、React やブラウザ API には依存しない。
  */
 
-/** フッターの「ご意見・バグ報告」リンク先。公開前に実際のフォームURLへ差し替える。 */
-export const FEEDBACK_FORM_URL = "https://forms.google.com/YOUR_FORM_ID";
+/** フッターの「ご意見・バグ報告」リンク先。 */
+export const FEEDBACK_FORM_URL = "https://forms.gle/yaMDAVEMbJcN7niY6";
 
 // ---------------------------------------------------------------------------
 // クライアント側の利用制限（LocalStorage ベース）
 // ---------------------------------------------------------------------------
 
 /** 1ブラウザあたり1日に実行できる解析・生成リクエストの上限。 */
-export const MAX_DAILY_REQUESTS = 15;
+export const MAX_DAILY_REQUESTS = 20;
+
+/** 残りがこの回数以下になったら、カウンタを警告色にして注意を促す。 */
+export const LOW_REMAINING_THRESHOLD = 5;
+
+/**
+ * 上限到達時のメッセージ。エディタ下部のバナーと単語ポップオーバーの
+ * 両方から参照し、文面と回数が食い違わないようにする。
+ */
+export const DAILY_LIMIT_MESSAGE = `本日の無料解析上限（${MAX_DAILY_REQUESTS}回）に達しました。明日またお試しください。`;
 
 /** 連打防止のため、次の解析までに最低限あける間隔（ミリ秒）。 */
 export const COOLDOWN_MS = 3000;
@@ -27,8 +36,15 @@ export const MAX_TEXT_LENGTH = 1000;
 // 複数インスタンスへのスケールアウトでカウントはリセット・分散する点に注意。
 // ---------------------------------------------------------------------------
 
-/** 1IPあたり1日に受け付けるAPIリクエストの上限。 */
-export const SERVER_MAX_DAILY_REQUESTS = 80;
+/**
+ * 1IPあたり1日に受け付けるAPIリクエストの上限。
+ *
+ * 1ユーザーが上限いっぱい（MAX_DAILY_REQUESTS 回）使った場合、1回の解析で
+ * text-scan と pronoun-context の2本が飛ぶため最大で約40リクエストになる。
+ * モバイル回線のCGNATや社内・学校のNAT配下では複数のテスターが同じIPに
+ * 見えるため、正当な利用が巻き添えで止まらないよう余裕を持たせている。
+ */
+export const SERVER_MAX_DAILY_REQUESTS = 300;
 
 /** バースト判定の時間窓（ミリ秒）。 */
 export const SERVER_BURST_WINDOW_MS = 10_000;
