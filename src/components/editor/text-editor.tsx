@@ -32,6 +32,7 @@ import {
   MAX_TEXT_LENGTH,
 } from "@/lib/config";
 import { consumeRequest, useUsageLimit } from "@/lib/usage-store";
+import { useTextHistory } from "@/lib/use-text-history";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 import { IssuePanel, type IssuePanelTab } from "./issue-panel";
@@ -94,6 +95,17 @@ export function TextEditor() {
 
   const { remaining, isExhausted } = useUsageLimit();
   const isOverLength = text.length > MAX_TEXT_LENGTH;
+
+  // Undo/Redo で内容が入れ替わると単語の位置がずれるため、開いている
+  // ポップオーバーは閉じる。
+  const handleHistoryRestore = useCallback(() => setActiveKey(null), []);
+
+  const { recordTyping, recordCommit, setCaret, handleUndoRedoKeyDown } = useTextHistory({
+    initialValue: "",
+    setValue: setText,
+    textareaRef,
+    onRestore: handleHistoryRestore,
+  });
 
   useEffect(() => {
     return () => {
@@ -250,13 +262,18 @@ export function TextEditor() {
   }, [text]);
 
   function handleReplace(start: number, end: number, replacement: string) {
-    setText((prev) => prev.slice(0, start) + replacement + prev.slice(end));
+    const next = text.slice(0, start) + replacement + text.slice(end);
+    const caret = start + replacement.length;
+    setText(next);
+    // 置換はひとまとまりの操作として、独立した履歴エントリにする。
+    recordCommit(next, caret, caret);
+    setCaret(caret);
     setActiveKey(null);
-    requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
   function handleSample() {
     setText(SAMPLE_TEXT);
+    recordCommit(SAMPLE_TEXT, SAMPLE_TEXT.length, SAMPLE_TEXT.length);
     setActiveKey(null);
   }
 
@@ -285,8 +302,9 @@ export function TextEditor() {
         return;
       }
       setText(clipboardText);
+      recordCommit(clipboardText, clipboardText.length, clipboardText.length);
+      setCaret(clipboardText.length);
       setActiveKey(null);
-      requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (error) {
       console.error("Failed to read clipboard:", error);
       setPasteError(
@@ -299,8 +317,9 @@ export function TextEditor() {
 
   function handleClear() {
     setText("");
+    recordCommit("", 0, 0);
+    setCaret(0);
     setActiveKey(null);
-    textareaRef.current?.focus();
   }
 
   // 下部のステータスボタン（改善ポイント／スペルミス）を押した時の開閉処理。
@@ -430,9 +449,12 @@ export function TextEditor() {
             ref={textareaRef}
             value={text}
             onChange={(event) => {
-              setText(event.target.value);
+              const element = event.target;
+              setText(element.value);
+              recordTyping(element.value, element.selectionStart, element.selectionEnd);
               setActiveKey(null);
             }}
+            onKeyDown={handleUndoRedoKeyDown}
             placeholder="ここに英文を入力または貼り付けしてください..."
             spellCheck={false}
             className={cn(
