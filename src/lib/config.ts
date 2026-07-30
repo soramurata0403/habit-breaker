@@ -4,7 +4,8 @@
  */
 
 /** フッターの「ご意見・バグ報告」リンク先。 */
-export const FEEDBACK_FORM_URL = "https://forms.gle/yaMDAVEMbJcN7niY6";
+export const FEEDBACK_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSe03Tkooy-JiKqT3CanFtPBUIVXg4JQPqXA26wNixxYFPkGKQ/viewform?usp=header";
 
 // ---------------------------------------------------------------------------
 // クライアント側の利用制限（LocalStorage ベース）
