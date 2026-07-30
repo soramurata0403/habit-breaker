@@ -168,7 +168,7 @@ function DynamicInsight({
       return {
         word: word.toLowerCase(),
         source: "ai" as const,
-        badgeLabel: "AIによる解説",
+        badgeLabel: "解説",
         insight:
           aiExplanation ?? `"${word}" は文脈上、誤字である可能性が高いと判断されました。`,
         suggestions: [],

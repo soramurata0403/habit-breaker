@@ -84,7 +84,7 @@ async function fetchFromApi(
     return {
       word,
       source: "ai",
-      badgeLabel: "AIによる解説",
+      badgeLabel: "解説",
       insight: data.explanation,
       suggestions,
       ...(isTypo
