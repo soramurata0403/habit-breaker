@@ -5,6 +5,7 @@ const OPENAI_MODEL = "gpt-4o-mini";
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_OCCURRENCES = 24;
 const MAX_SENTENCE_LENGTH = 300;
+const MAX_DOCUMENT_LENGTH = 4000;
 
 type Occurrence = { id: number; word: string; sentence: string };
 type ResultEntry = { id: number; isVague: boolean };
@@ -12,14 +13,38 @@ type SuccessPayload = { results: ResultEntry[] };
 
 const SYSTEM_PROMPT = `あなたは英文エッセイにおける代名詞 we / us / our の使い方を判定する校正者です。
 
-入力は { "occurrences": [{ "id": number, "word": "we"|"us"|"our", "sentence": string }, ...] }
-という配列で、それぞれが文章中の we/us/our の1つの出現箇所と、それを含む文（前後の文脈）を表します。
+入力は
+{ "document": string, "occurrences": [{ "id": number, "word": "we"|"us"|"our", "sentence": string }, ...] }
+という形式で、"document" は文章全体、"occurrences" はその中の we/us/our の各出現箇所と、
+それを含む一文（前後の文脈）を表します。
 
-各itemについて、その we/us/our が次のどちらの使われ方かを判定してください:
+## ステップ1: 文章全体のトーン（ジャンル）を判定する
+
+"document" 全体を読み、次のどちらのタイプかをまず判断してください:
+
+A. 個人的な体験談・エッセイ・志望理由書（Personal Statement）
+   一人称（I, my, me）や、具体的な人物・出来事・関係性
+   （例: friend, conversed, talked, team, Lehi のような固有名詞や具体的なエピソード）
+   が含まれ、著者自身の経験・体験を語っている文章。
+
+B. アカデミックな論説文
+   特定の個人の体験ではなく、「社会」「人々」「人類」といった対象について
+   一般論・主張を展開している文章。
+
+**"document" がAだと判断した場合、その中に含まれる we/us/our は、
+著者自身と、具体的な友人・家族・同僚・チームメイトなどの人々を指していると
+考えるのが自然です。この場合、occurrences の isVague はすべて false としてください
+（個々の文について詳細な判定を行う必要はありません）。**
+
+"document" がBだと判断した場合のみ、ステップ2に進んでください。
+
+## ステップ2（"document" がBの場合のみ）: 出現箇所ごとの判定
+
+occurrences の各itemについて、その we/us/our が次のどちらの使われ方かを判定してください:
 
 1. 具体的な人物を指す代名詞として適切に使われている
-   （例: "my friend and I", "Lehi and I", "my colleague", "my family" など、
-   文中に具体的な人物・関係性が明示されており、その人たちを指している場合）
+   （例: "my friend and I", "Lehi and I", "my colleague", "my family", "our team" など、
+   その文または同じ段落内に具体的な人物・関係性が明示されており、その人たちを指している場合）
    → isVague: false
 
 2. 「人々全般」「社会」「人類」を指す、曖昧で抽象的な主語・目的語・所有格として
@@ -27,12 +52,16 @@ const SYSTEM_PROMPT = `あなたは英文エッセイにおける代名詞 we / 
    TOEFL/IELTSのアカデミックエッセイにありがちな一般論の書き出し）
    → isVague: true
 
-Check if 'we'/'us'/'our' has a specific antecedent (e.g., "my friend and I").
-If it refers to specific people, do NOT mark it as vague (isVague: false).
-Only mark it as vague (isVague: true) when it is used as a vague, general
-pronoun for people/society/humanity in an academic-essay context.
+Check if 'we'/'us'/'our' has a specific antecedent (e.g., "my friend and I") anywhere
+in the same paragraph. If it refers to specific people, do NOT mark it as vague
+(isVague: false). Only mark it as vague (isVague: true) when it is used as a vague,
+general pronoun for people/society/humanity in an academic-essay context.
 
-確信が持てない場合は isVague: false としてください（誤検知を避けるため）。
+## 重要: 誤検出防止の原則
+
+文章全体が個人的な体験談かアカデミックな論説文か判断に迷う場合、または個々の
+occurrenceが具体的な人物を指しているか曖昧な一般論かの判断に迷う場合は、
+必ず isVague: false としてください（ハイライトしすぎるより、見逃す方が安全です）。
 
 必ず以下のJSON形式のみで出力してください（前後に説明文や余計なテキストを含めないこと）:
 {
@@ -73,7 +102,7 @@ export async function POST(request: Request) {
     return Response.json({ error: "リクエストボディが不正です。" }, { status: 400 });
   }
 
-  const { occurrences } = (body ?? {}) as { occurrences?: unknown };
+  const { text, occurrences } = (body ?? {}) as { text?: unknown; occurrences?: unknown };
 
   if (!Array.isArray(occurrences) || occurrences.length === 0) {
     return Response.json({ results: [] }, { status: 200 });
@@ -91,6 +120,12 @@ export async function POST(request: Request) {
   if (safeOccurrences.length === 0) {
     return Response.json({ results: [] }, { status: 200 });
   }
+
+  // 文章全体のトーン（個人的な体験談かアカデミックな論説文か）を判定するために使う。
+  const safeDocument =
+    typeof text === "string" && text.trim().length > 0
+      ? text.trim().slice(0, MAX_DOCUMENT_LENGTH)
+      : safeOccurrences.map((o) => o.sentence).join(" ");
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -119,7 +154,10 @@ export async function POST(request: Request) {
           { role: "system", content: SYSTEM_PROMPT },
           {
             role: "user",
-            content: JSON.stringify({ occurrences: safeOccurrences }),
+            content: JSON.stringify({
+              document: safeDocument,
+              occurrences: safeOccurrences,
+            }),
           },
         ],
       }),

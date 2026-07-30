@@ -150,7 +150,9 @@ export function TextEditor() {
 
     // occurrences が空の場合も checkPronounContext は（通信を行わず）即座に
     // 空集合を返すため、setState は常に then() の中でのみ行われる。
-    checkPronounContext(occurrences).then((vagueIds) => {
+    // documentText（文章全体）を渡すことで、個人的な体験談かアカデミックな
+    // 論説文かのトーン判定も行われる。
+    checkPronounContext(occurrences, debouncedText).then((vagueIds) => {
       if (cancelled) return;
       setVaguePronouns({ text: debouncedText, starts: vagueIds });
     });
@@ -377,11 +379,31 @@ export function TextEditor() {
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-neutral-400">
-        <span className="whitespace-nowrap">{text.length} 文字</span>
-        <span className="flex flex-wrap gap-x-3 gap-y-1">
-          <span className="whitespace-nowrap">{highlightCount} 件の改善ポイント</span>
-          <span className="whitespace-nowrap">{typoCount} 件のスペルミスの疑い</span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <span className="text-sm font-medium whitespace-nowrap text-neutral-600">
+          {text.length} 文字
+        </span>
+        <span className="flex flex-wrap gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap",
+              highlightCount > 0
+                ? "bg-amber-100 text-amber-900"
+                : "bg-neutral-100 text-neutral-500",
+            )}
+          >
+            <span className="text-base font-bold">{highlightCount}</span>
+            件の改善ポイント
+          </span>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium whitespace-nowrap",
+              typoCount > 0 ? "bg-red-100 text-red-900" : "bg-neutral-100 text-neutral-500",
+            )}
+          >
+            <span className="text-base font-bold">{typoCount}</span>
+            件のスペルミスの疑い
+          </span>
         </span>
       </div>
     </div>

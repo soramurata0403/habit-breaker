@@ -6,6 +6,7 @@ const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o-mini";
 const REQUEST_TIMEOUT_MS = 15000;
 const MAX_CONTEXT_LENGTH = 500;
+const MAX_DOCUMENT_LENGTH = 4000;
 
 type Candidate = { word: string; nuance: string };
 type SuccessPayload = {
@@ -41,16 +42,34 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTSのアカデミックライテ�
   "isTypo" を true にし、"suggestedSpelling" に正しい綴りの単語を1語入れること。
   この場合、candidates は「修正後の正しい単語」を基準にした言い換え候補にすること。
   スペルミスの疑いがない場合は "isTypo" を false、"suggestedSpelling" を null にすること。
-- 対象単語が "we" / "us" / "our" のいずれかである場合は、まず文脈上の使われ方を確認すること:
-  Check if 'we'/'us'/'our' has a specific antecedent (e.g., "my friend and I", "Lehi and I", "my colleague", "my family").
-  If it refers to specific people, this is a perfectly normal, correct usage — set "isVaguePronoun" to false, and in
-  "explanation" state that this usage is fine and no change is needed, with "candidates" as an empty array [].
-  Only set "isVaguePronoun" to true when 'we'/'us'/'our' is used as a vague, general pronoun for people/society/humanity
-  in an academic-essay context (e.g., "We often think that technology..."); in that case provide candidates as usual.
+- 対象単語が "we" / "us" / "our" のいずれかである場合は、まず「文書全体」（渡されていれば）を読み、
+  次のどちらのタイプかを判断すること:
+  A. 個人的な体験談・エッセイ・志望理由書（Personal Statement）
+     一人称（I, my, me）や、具体的な人物・出来事・関係性（例: friend, conversed, talked, team, 固有名詞）
+     が含まれ、著者自身の経験を語っている文章。
+  B. アカデミックな論説文（「社会」「人々」「人類」について一般論・主張を展開している文章）。
+
+  文書全体がAだと判断した場合、その中の we/us/our は著者自身と具体的な人々を指していると
+  考えるのが自然なので、"isVaguePronoun" を false にし、"explanation" でこの使い方は適切で
+  言い換えの必要がない旨を述べ、"candidates" は空配列 [] にすること。
+
+  文書全体がBだと判断した場合のみ、対象単語自体の文脈上の使われ方を確認すること:
+  Check if 'we'/'us'/'our' has a specific antecedent (e.g., "my friend and I", "Lehi and I", "my colleague", "my family")
+  anywhere in the same paragraph. If it refers to specific people, this is a perfectly normal, correct usage — set
+  "isVaguePronoun" to false, and in "explanation" state that this usage is fine and no change is needed, with
+  "candidates" as an empty array []. Only set "isVaguePronoun" to true when 'we'/'us'/'our' is used as a vague,
+  general pronoun for people/society/humanity in an academic-essay context (e.g., "We often think that
+  technology..."); in that case provide candidates as usual.
+
+  文書全体のトーンや対象単語の使われ方の判断に迷う場合は、誤検出を避けるため必ず
+  "isVaguePronoun" を false にすること（ハイライトしすぎるより見逃す方が安全なため）。
   対象単語が we/us/our 以外の場合は "isVaguePronoun" を false のままにすること。`;
 
-function buildUserPrompt(word: string, contextSentence: string) {
-  return `対象単語: "${word}"\n文脈: "${contextSentence}"\n\nこの文脈における "${word}" の、よりアカデミックな言い換え候補を3つ提案してください。`;
+function buildUserPrompt(word: string, contextSentence: string, documentText?: string) {
+  const documentPart = documentText
+    ? `\n文書全体（トーン判定用）: "${documentText}"`
+    : "";
+  return `対象単語: "${word}"\n文脈: "${contextSentence}"${documentPart}\n\nこの文脈における "${word}" の、よりアカデミックな言い換え候補を3つ提案してください。`;
 }
 
 function isSuccessPayload(value: unknown, allowEmptyCandidates: boolean): value is SuccessPayload {
@@ -102,9 +121,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "リクエストボディが不正です。" }, { status: 400 });
   }
 
-  const { word, contextSentence } = (body ?? {}) as {
+  const { word, contextSentence, documentText } = (body ?? {}) as {
     word?: unknown;
     contextSentence?: unknown;
+    documentText?: unknown;
   };
 
   if (typeof word !== "string" || word.trim().length === 0) {
@@ -124,6 +144,11 @@ export async function POST(request: Request) {
       ? contextSentence.trim().slice(0, MAX_CONTEXT_LENGTH)
       : word;
 
+  const safeDocument =
+    typeof documentText === "string" && documentText.trim().length > 0
+      ? documentText.trim().slice(0, MAX_DOCUMENT_LENGTH)
+      : undefined;
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -141,7 +166,7 @@ export async function POST(request: Request) {
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: buildUserPrompt(word, safeContext) },
+          { role: "user", content: buildUserPrompt(word, safeContext, safeDocument) },
         ],
       }),
       signal: controller.signal,

@@ -51,12 +51,13 @@ function normalizeCandidates(candidates: unknown): Suggestion[] {
 async function fetchFromApi(
   word: string,
   contextSentence: string,
+  documentText?: string,
 ): Promise<WordInsight | null> {
   try {
     const response = await fetch("/api/word-insight", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word, contextSentence }),
+      body: JSON.stringify({ word, contextSentence, documentText }),
     });
 
     if (!response.ok) return null;
@@ -184,11 +185,14 @@ type PronounContextApiResponse = { results?: unknown };
  * /api/pronoun-context を呼び出し、文章中の we/us/our の各出現箇所について、
  * 「人々全般」を指す曖昧な用法かどうかをAIに判定させる。
  * `id` には呼び出し側で単語トークンの開始位置などの安定した識別子を渡す。
+ * `documentText` には文章全体を渡し、個人的な体験談かアカデミックな論説文かの
+ * トーン判定に使う（個人的な体験談の場合、we/us/our は一律で誤検出対象外になる）。
  * ネットワークエラー・APIキー未設定などの場合は空集合を返し、
  * 呼び出し側は「今回は曖昧な用法なし」として扱えるようにする。
  */
 export async function checkPronounContext(
   occurrences: PronounOccurrence[],
+  documentText: string,
 ): Promise<Set<number>> {
   if (occurrences.length === 0) return new Set();
 
@@ -196,7 +200,7 @@ export async function checkPronounContext(
     const response = await fetch("/api/pronoun-context", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ occurrences }),
+      body: JSON.stringify({ text: documentText, occurrences }),
     });
 
     if (!response.ok) return new Set();
@@ -231,6 +235,7 @@ export async function checkPronounContext(
 export async function fetchWordInsight(
   rawWord: string,
   contextSentence?: string,
+  documentText?: string,
 ): Promise<WordInsight> {
   const word = rawWord.toLowerCase();
 
@@ -245,7 +250,7 @@ export async function fetchWordInsight(
     };
   }
 
-  const aiInsight = await fetchFromApi(rawWord, contextSentence?.trim() || rawWord);
+  const aiInsight = await fetchFromApi(rawWord, contextSentence?.trim() || rawWord, documentText);
   if (aiInsight) return aiInsight;
 
   return localFallback(rawWord, word);

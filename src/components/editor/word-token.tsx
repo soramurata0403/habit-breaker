@@ -192,7 +192,7 @@ function DynamicInsight({
     const contextSentence = contextualPronouns.has(word.toLowerCase())
       ? getExtendedContext(fullText, start, 1)
       : getContextSentence(fullText, start);
-    fetchWordInsight(word, contextSentence).then((result) => {
+    fetchWordInsight(word, contextSentence, fullText).then((result) => {
       if (cancelled) return;
       // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
       // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。
