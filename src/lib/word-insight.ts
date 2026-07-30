@@ -130,13 +130,20 @@ export type ContextualTypo = {
 type ScanApiResponse = { typos?: unknown };
 
 /**
+ * `didRequest` は「実際にサーバーへリクエストを送り、正常な応答を受け取った」
+ * ことを表す。利用回数はこれが true の場合にのみ消費する（通信していない場合や
+ * エラー・レート制限で弾かれた場合は消費しない）。
+ */
+export type ScanOutcome = { didRequest: boolean; typos: ContextualTypo[] };
+
+/**
  * /api/text-scan を呼び出し、文章全体から「実在するが文脈上明らかに
  * 誤りである単語（例: leaned → learned）」を検出する。
  * ネットワークエラー・APIキー未設定などの場合は空配列を返し、
  * 呼び出し側は単に「今回は検出結果なし」として扱えるようにする。
  */
-export async function scanTextForContextualTypos(text: string): Promise<ContextualTypo[]> {
-  if (!text.trim()) return [];
+export async function scanTextForContextualTypos(text: string): Promise<ScanOutcome> {
+  if (!text.trim()) return { didRequest: false, typos: [] };
 
   try {
     const response = await fetch("/api/text-scan", {
@@ -145,12 +152,12 @@ export async function scanTextForContextualTypos(text: string): Promise<Contextu
       body: JSON.stringify({ text }),
     });
 
-    if (!response.ok) return [];
+    if (!response.ok) return { didRequest: false, typos: [] };
 
     const data = (await response.json()) as ScanApiResponse;
-    if (!Array.isArray(data.typos)) return [];
+    if (!Array.isArray(data.typos)) return { didRequest: true, typos: [] };
 
-    return data.typos
+    const typos = data.typos
       .filter(
         (item): item is { word: string; suggestedSpelling: string; explanation: string } => {
           if (!item || typeof item !== "object") return false;
@@ -167,9 +174,11 @@ export async function scanTextForContextualTypos(text: string): Promise<Contextu
         suggestedSpelling: item.suggestedSpelling,
         explanation: item.explanation,
       }));
+
+    return { didRequest: true, typos };
   } catch (error) {
     console.error("Failed to scan text for contextual typos:", error);
-    return [];
+    return { didRequest: false, typos: [] };
   }
 }
 
@@ -190,11 +199,13 @@ type PronounContextApiResponse = { results?: unknown };
  * ネットワークエラー・APIキー未設定などの場合は空集合を返し、
  * 呼び出し側は「今回は曖昧な用法なし」として扱えるようにする。
  */
+export type PronounContextOutcome = { didRequest: boolean; vagueIds: Set<number> };
+
 export async function checkPronounContext(
   occurrences: PronounOccurrence[],
   documentText: string,
-): Promise<Set<number>> {
-  if (occurrences.length === 0) return new Set();
+): Promise<PronounContextOutcome> {
+  if (occurrences.length === 0) return { didRequest: false, vagueIds: new Set() };
 
   try {
     const response = await fetch("/api/pronoun-context", {
@@ -203,10 +214,10 @@ export async function checkPronounContext(
       body: JSON.stringify({ text: documentText, occurrences }),
     });
 
-    if (!response.ok) return new Set();
+    if (!response.ok) return { didRequest: false, vagueIds: new Set() };
 
     const data = (await response.json()) as PronounContextApiResponse;
-    if (!Array.isArray(data.results)) return new Set();
+    if (!Array.isArray(data.results)) return { didRequest: true, vagueIds: new Set() };
 
     const vagueIds = data.results
       .filter((item): item is { id: number; isVague: boolean } => {
@@ -217,10 +228,10 @@ export async function checkPronounContext(
       .filter((item) => item.isVague)
       .map((item) => item.id);
 
-    return new Set(vagueIds);
+    return { didRequest: true, vagueIds: new Set(vagueIds) };
   } catch (error) {
     console.error("Failed to check pronoun context:", error);
-    return new Set();
+    return { didRequest: false, vagueIds: new Set() };
   }
 }
 

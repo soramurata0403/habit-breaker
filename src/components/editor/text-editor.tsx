@@ -25,6 +25,7 @@ import { loadDictionary } from "@/lib/spellcheck";
 import { checkPronounContext, scanTextForContextualTypos } from "@/lib/word-insight";
 import { buildIssueItems } from "@/lib/issue-list";
 import {
+  ANALYSIS_DEBOUNCE_MS,
   COOLDOWN_MS,
   DAILY_LIMIT_MESSAGE,
   LOW_REMAINING_THRESHOLD,
@@ -45,8 +46,21 @@ const MIN_HEIGHT = 224;
 
 // 入力中の単語（例: "policy" の途中の "polic"）を誤ってスペルミス判定
 // しないよう、入力が止まってからこの時間が経過するまでスペルチェックの
-// 反映を遅らせる。
+// 反映を遅らせる。こちらは通信を伴わないローカル処理専用の遅延。
 const SPELLCHECK_DEBOUNCE_MS = 900;
+
+// 同じ本文を再解析しないためのキャッシュ保持数（Undo/Redo・推敲時の
+// 行き来で無駄にAPIを叩かないようにする）。
+const MAX_ANALYSIS_CACHE_ENTRIES = 50;
+
+/**
+ * 解析対象として「意味のある変化」があったかを比較するための正規化。
+ * 空白・改行の増減だけでは解析を実行しないよう、連続する空白は1つに
+ * まとめ、前後の空白は落とす。
+ */
+function normalizeForAnalysis(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
 
 // we/us/our の文脈チェックに一度に送る出現数の上限（コスト・応答時間の抑制）。
 const MAX_PRONOUN_OCCURRENCES = 24;
@@ -72,6 +86,8 @@ export function TextEditor() {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [dictionary, setDictionary] = useState<Set<string> | null>(null);
   const [debouncedText, setDebouncedText] = useState("");
+  // API解析用のデバウンス値。ローカル処理（debouncedText）より長く待つ。
+  const [analysisText, setAnalysisText] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [isPasting, setIsPasting] = useState(false);
   const [aiTypos, setAiTypos] = useState<Map<string, AiTypoInfo>>(new Map());
@@ -92,6 +108,11 @@ export function TextEditor() {
   const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
   const lastAnalysisAtRef = useRef(0);
+  // 直前に解析した本文（正規化済み）。空白だけの変化では再解析しないための比較用。
+  const lastAnalyzedRef = useRef("");
+  // 解析済みの本文 → we/us/our の判定結果。Undo/Redo などで同じ本文に
+  // 戻ったとき、APIを叩き直さずに復元するためのセッション内キャッシュ。
+  const analysisCacheRef = useRef(new Map<string, Set<number>>());
 
   const { remaining, isExhausted } = useUsageLimit();
   const isOverLength = text.length > MAX_TEXT_LENGTH;
@@ -128,6 +149,11 @@ export function TextEditor() {
     return () => clearTimeout(timeoutId);
   }, [text]);
 
+  useEffect(() => {
+    const timeoutId = setTimeout(() => setAnalysisText(text), ANALYSIS_DEBOUNCE_MS);
+    return () => clearTimeout(timeoutId);
+  }, [text]);
+
   // 入力が確定した（＝一定時間止まった）タイミングで、文章全体に対する
   // 事前スキャンを1回の「解析」としてまとめて実行する。
   //   - 文脈的なタイポ（例: leaned → learned）の検出
@@ -135,10 +161,14 @@ export function TextEditor() {
   // どちらもタップ前からハイライトを付けるための処理で、必ず同時に走るため、
   // 利用回数のカウントとクールダウンは「この1ラウンド」単位で扱う。
   useEffect(() => {
-    if (!debouncedText || debouncedText !== text) return;
+    if (!analysisText || analysisText !== text) return;
     // 上限到達時・文字数超過時は通信を行わない（ローカル辞書とコーパス
     // ルールによるハイライトはそのまま動作し続ける）。
     if (isExhausted || isOverLength) return;
+
+    // 空白・改行だけの変化では解析しない。空白のみの本文も対象外。
+    const normalized = normalizeForAnalysis(analysisText);
+    if (!normalized || normalized === lastAnalyzedRef.current) return;
 
     let cancelled = false;
 
@@ -148,10 +178,30 @@ export function TextEditor() {
 
     const timeoutId = setTimeout(() => {
       if (cancelled) return;
-      lastAnalysisAtRef.current = Date.now();
-      consumeRequest();
 
-      scanTextForContextualTypos(debouncedText).then((typos) => {
+      // Undo/Redo や推敲での行き来で同じ本文に戻った場合は、
+      // 通信せずキャッシュから復元する（利用回数も消費しない）。
+      const cached = analysisCacheRef.current.get(analysisText);
+      if (cached) {
+        lastAnalyzedRef.current = normalized;
+        setVaguePronouns({ text: analysisText, starts: cached });
+        return;
+      }
+
+      lastAnalysisAtRef.current = Date.now();
+      lastAnalyzedRef.current = normalized;
+
+      // 利用回数は「実際にリクエストを送り、正常な応答を受け取った」場合のみ
+      // 消費する。1回の解析で2本のAPIが飛ぶため、消費は1回にまとめる。
+      let counted = false;
+      const countOnce = () => {
+        if (counted) return;
+        counted = true;
+        consumeRequest();
+      };
+
+      scanTextForContextualTypos(analysisText).then(({ didRequest, typos }) => {
+        if (didRequest) countOnce();
         if (cancelled || typos.length === 0) return;
         setAiTypos((prev) => {
           const next = new Map(prev);
@@ -170,7 +220,7 @@ export function TextEditor() {
         });
       });
 
-      const pronounTokens = tokenize(debouncedText).filter(
+      const pronounTokens = tokenize(analysisText).filter(
         (token): token is Extract<Token, { type: "word" }> =>
           token.type === "word" && contextualPronouns.has(token.text.toLowerCase()),
       );
@@ -180,14 +230,23 @@ export function TextEditor() {
         word: token.text,
         // 先行詞（例: 前文で紹介された人物名）が前文にあるケースにも
         // 対応できるよう、直前の1文も含めた文脈をAIに渡す。
-        sentence: getExtendedContext(debouncedText, token.start, 1),
+        sentence: getExtendedContext(analysisText, token.start, 1),
       }));
 
       // documentText（文章全体）を渡すことで、個人的な体験談かアカデミックな
       // 論説文かのトーン判定も行われる。
-      checkPronounContext(occurrences, debouncedText).then((vagueIds) => {
+      checkPronounContext(occurrences, analysisText).then(({ didRequest, vagueIds }) => {
+        if (didRequest) countOnce();
+
+        const cache = analysisCacheRef.current;
+        cache.set(analysisText, vagueIds);
+        if (cache.size > MAX_ANALYSIS_CACHE_ENTRIES) {
+          const oldest = cache.keys().next().value;
+          if (oldest !== undefined) cache.delete(oldest);
+        }
+
         if (cancelled) return;
-        setVaguePronouns({ text: debouncedText, starts: vagueIds });
+        setVaguePronouns({ text: analysisText, starts: vagueIds });
       });
     }, waitMs);
 
@@ -195,7 +254,7 @@ export function TextEditor() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [debouncedText, text, isExhausted, isOverLength]);
+  }, [analysisText, text, isExhausted, isOverLength]);
 
   // クリック時にAI（/api/word-insight）が isTypo: true と判定した単語も、
   // 以後は文章全体でリアルタイムに赤ハイライトへ反映されるようにする。

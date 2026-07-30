@@ -237,8 +237,10 @@ function DynamicInsight({
     const contextSentence = contextualPronouns.has(word.toLowerCase())
       ? getExtendedContext(fullText, start, 1)
       : getContextSentence(fullText, start);
-    if (needsApi) consumeRequest();
     fetchWordInsight(word, contextSentence, fullText).then((result) => {
+      // source が "ai" のときだけ、実際にAPIへ問い合わせて正常な応答を
+      // 受け取っている（コーパス由来・ローカルフォールバックは消費しない）。
+      if (result.source === "ai") consumeRequest();
       if (cancelled) return;
       // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
       // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。

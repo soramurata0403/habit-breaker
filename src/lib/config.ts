@@ -26,6 +26,13 @@ export const DAILY_LIMIT_MESSAGE = `本日の無料解析上限（${MAX_DAILY_RE
 /** 連打防止のため、次の解析までに最低限あける間隔（ミリ秒）。 */
 export const COOLDOWN_MS = 3000;
 
+/**
+ * 入力が止まってからサーバー解析を実行するまでの待ち時間（ミリ秒）。
+ * コーパスルールやローカル辞書によるハイライトはこれとは別の短い遅延で
+ * 即座に更新されるため、この値は「API を叩くまでの猶予」だけを決める。
+ */
+export const ANALYSIS_DEBOUNCE_MS = 1500;
+
 /** 1回の解析対象テキストの最大文字数。 */
 export const MAX_TEXT_LENGTH = 1000;
 
