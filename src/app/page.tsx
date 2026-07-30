@@ -21,7 +21,10 @@ export default function Home() {
           </p>
         </header>
 
-        <main className="rounded-3xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur-sm sm:p-8">
+        {/* relative は必須: サイドパネルを開いた際、このカードの右外側
+            （背景の余白エリア）へ absolute で浮かせる際の基準になる。
+            カード自身の幅はパネルの開閉によって変化しない。 */}
+        <main className="relative rounded-3xl border border-neutral-200 bg-white/70 p-5 shadow-sm backdrop-blur-sm sm:p-8">
           <TextEditor />
         </main>
 

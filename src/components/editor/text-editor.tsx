@@ -355,8 +355,10 @@ export function TextEditor() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-4 lg:flex-row lg:items-start">
-      <div className="min-w-0 flex-1">
+    // パネルはこのツリー内で absolute 配置（panel: 以上）または通常フロー
+    // （それ未満）で描画されるため、エディタ側は常に幅 100% を保つ。
+    <div className="w-full">
+      <div>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
             <span className="flex items-center gap-1.5">
@@ -461,14 +463,20 @@ export function TextEditor() {
       </div>
 
       {activePanel && (
-        <IssuePanel
-          activeTab={activePanel}
-          onTabChange={setActivePanel}
-          onClose={handleClosePanel}
-          improvementItems={improvementItems}
-          spellingItems={spellingItems}
-          onSelectIssue={handleSelectIssue}
-        />
+        // panel ブレークポイント以上: メインカードの右外側の余白へ absolute で
+        // 浮かせる（left-full = カード内側の右端）。カードは幅も高さも影響を
+        // 受けないため、テキストエリアの折り返し幅は開閉前と完全に同一。
+        // それ未満: 通常フローでエディタの真下に全幅で積む（横幅を奪わない）。
+        <div className="mt-4 w-full panel:absolute panel:top-0 panel:left-full panel:mt-0 panel:ml-4 panel:w-[288px]">
+          <IssuePanel
+            activeTab={activePanel}
+            onTabChange={setActivePanel}
+            onClose={handleClosePanel}
+            improvementItems={improvementItems}
+            spellingItems={spellingItems}
+            onSelectIssue={handleSelectIssue}
+          />
+        </div>
       )}
     </div>
   );

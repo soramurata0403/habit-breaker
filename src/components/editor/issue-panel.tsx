@@ -27,7 +27,8 @@ export function IssuePanel({
   const items = activeTab === "improvements" ? improvementItems : spellingItems;
 
   return (
-    <aside className="animate-panel-in w-full shrink-0 rounded-2xl border border-neutral-200 bg-white shadow-sm lg:sticky lg:top-6 lg:w-[300px]">
+    // 幅・配置は親のラッパーが制御する（画面幅によって浮かせるか下に積むかが変わる）。
+    <aside className="animate-panel-in w-full rounded-2xl border border-neutral-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-100 px-3 py-3">
         <div className="flex gap-1 rounded-full bg-neutral-100 p-1 text-xs font-semibold">
           <button
