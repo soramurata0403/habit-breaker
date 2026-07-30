@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ClipboardPaste, RotateCcw, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { tokenize } from "@/lib/tokenize";
+import { applyAiTypoFlags, tokenize, type AiTypoInfo } from "@/lib/tokenize";
 import { SAMPLE_TEXT } from "@/data/habit-rules";
 import { loadDictionary } from "@/lib/spellcheck";
+import { scanTextForContextualTypos } from "@/lib/word-insight";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 
@@ -37,6 +38,7 @@ export function TextEditor() {
   const [debouncedText, setDebouncedText] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [isPasting, setIsPasting] = useState(false);
+  const [aiTypos, setAiTypos] = useState<Map<string, AiTypoInfo>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -54,19 +56,66 @@ export function TextEditor() {
     return () => clearTimeout(timeoutId);
   }, [text]);
 
+  // 入力が確定した（＝一定時間止まった）タイミングで、文章全体に対して
+  // 文脈的なタイポ（例: leaned → learned）の事前スキャンを行う。
+  // タップする前から赤ハイライトを付けられるようにするための処理。
+  useEffect(() => {
+    if (!debouncedText || debouncedText !== text) return;
+    let cancelled = false;
+    scanTextForContextualTypos(debouncedText).then((typos) => {
+      if (cancelled || typos.length === 0) return;
+      setAiTypos((prev) => {
+        const next = new Map(prev);
+        let changed = false;
+        for (const typo of typos) {
+          const key = typo.word.toLowerCase();
+          if (!next.has(key)) {
+            next.set(key, {
+              suggestedSpelling: typo.suggestedSpelling,
+              explanation: typo.explanation,
+            });
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedText, text]);
+
+  // クリック時にAI（/api/word-insight）が isTypo: true と判定した単語も、
+  // 以後は文章全体でリアルタイムに赤ハイライトへ反映されるようにする。
+  const handleConfirmAiTypo = useCallback(
+    (word: string, suggestedSpelling: string, explanation: string) => {
+      const key = word.toLowerCase();
+      setAiTypos((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Map(prev);
+        next.set(key, { suggestedSpelling, explanation });
+        return next;
+      });
+    },
+    [],
+  );
+
   // 入力が確定した（＝一定時間止まった）場合のみ辞書チェックを適用する。
   // まだ確定していない間は dictionary を渡さず、赤色ハイライトの更新を保留する。
   const spellcheckDictionary = debouncedText === text ? dictionary : null;
-  const tokens = useMemo(
-    () => tokenize(text, spellcheckDictionary),
-    [text, spellcheckDictionary],
-  );
+  const tokens = useMemo(() => {
+    const base = tokenize(text, spellcheckDictionary);
+    return applyAiTypoFlags(base, aiTypos);
+  }, [text, spellcheckDictionary, aiTypos]);
   const highlightCount = useMemo(
     () => tokens.filter((token) => token.type === "word" && token.rule).length,
     [tokens],
   );
   const typoCount = useMemo(
-    () => tokens.filter((token) => token.type === "word" && token.isUnknownWord).length,
+    () =>
+      tokens.filter(
+        (token) => token.type === "word" && (token.isUnknownWord || token.isAiTypo),
+      ).length,
     [tokens],
   );
 
@@ -216,6 +265,7 @@ export function TextEditor() {
                   isOpen={activeKey === token.key}
                   onOpenChange={(open) => setActiveKey(open ? token.key : null)}
                   onReplace={handleReplace}
+                  onConfirmAiTypo={handleConfirmAiTypo}
                 />
               ) : (
                 <span key={token.key}>{token.text}</span>

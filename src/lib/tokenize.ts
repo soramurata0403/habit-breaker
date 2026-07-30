@@ -1,6 +1,11 @@
 import { habitRuleMap, type HabitRule } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
 
+export type AiTypoInfo = {
+  suggestedSpelling: string;
+  explanation: string;
+};
+
 export type Token =
   | {
       type: "text";
@@ -15,6 +20,9 @@ export type Token =
       end: number;
       rule?: HabitRule;
       isUnknownWord?: boolean;
+      isAiTypo?: boolean;
+      aiSuggestedSpelling?: string;
+      aiExplanation?: string;
     };
 
 const SENTENCE_END_PATTERN = /[.!?]/;
@@ -62,6 +70,32 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
   }
 
   return tokens;
+}
+
+/**
+ * AI（文脈チェック）が「実在するが文脈上誤り」と確認済みの単語（小文字化
+ * した単語文字列がキー）を、対応する word トークンに反映する。
+ * コーパスルール単語（rule 付き）は対象外とする。
+ */
+export function applyAiTypoFlags(
+  tokens: Token[],
+  aiTypos: Map<string, AiTypoInfo>,
+): Token[] {
+  if (aiTypos.size === 0) return tokens;
+
+  return tokens.map((token) => {
+    if (token.type !== "word" || token.rule) return token;
+
+    const match = aiTypos.get(token.text.toLowerCase());
+    if (!match) return token;
+
+    return {
+      ...token,
+      isAiTypo: true,
+      aiSuggestedSpelling: match.suggestedSpelling,
+      aiExplanation: match.explanation,
+    };
+  });
 }
 
 const MAX_CONTEXT_LENGTH = 500;

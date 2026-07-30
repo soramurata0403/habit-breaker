@@ -111,6 +111,58 @@ function localFallback(rawWord: string, word: string): WordInsight {
   };
 }
 
+export type ContextualTypo = {
+  word: string;
+  suggestedSpelling: string;
+  explanation: string;
+};
+
+type ScanApiResponse = { typos?: unknown };
+
+/**
+ * /api/text-scan を呼び出し、文章全体から「実在するが文脈上明らかに
+ * 誤りである単語（例: leaned → learned）」を検出する。
+ * ネットワークエラー・APIキー未設定などの場合は空配列を返し、
+ * 呼び出し側は単に「今回は検出結果なし」として扱えるようにする。
+ */
+export async function scanTextForContextualTypos(text: string): Promise<ContextualTypo[]> {
+  if (!text.trim()) return [];
+
+  try {
+    const response = await fetch("/api/text-scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as ScanApiResponse;
+    if (!Array.isArray(data.typos)) return [];
+
+    return data.typos
+      .filter(
+        (item): item is { word: string; suggestedSpelling: string; explanation: string } => {
+          if (!item || typeof item !== "object") return false;
+          const t = item as Record<string, unknown>;
+          return (
+            typeof t.word === "string" &&
+            typeof t.suggestedSpelling === "string" &&
+            typeof t.explanation === "string"
+          );
+        },
+      )
+      .map((item) => ({
+        word: item.word,
+        suggestedSpelling: item.suggestedSpelling,
+        explanation: item.explanation,
+      }));
+  } catch (error) {
+    console.error("Failed to scan text for contextual typos:", error);
+    return [];
+  }
+}
+
 /**
  * 単語ごとの解説・言い換え候補を取得するフック。
  *

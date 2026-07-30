@@ -17,6 +17,7 @@ type WordTokenProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
+  onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
 };
 
 export function WordToken({
@@ -26,9 +27,10 @@ export function WordToken({
   isOpen,
   onOpenChange,
   onReplace,
+  onConfirmAiTypo,
 }: WordTokenProps) {
   const isHighlighted = Boolean(token.rule);
-  const isTypoFlagged = Boolean(token.isUnknownWord);
+  const isTypoFlagged = Boolean(token.isUnknownWord) || Boolean(token.isAiTypo);
 
   function handlePick(replacement: string) {
     onReplace(token.start, token.end, matchCase(token.text, replacement));
@@ -83,8 +85,12 @@ export function WordToken({
               start={token.start}
               fullText={fullText}
               isTypoFlagged={isTypoFlagged}
+              isAiTypo={Boolean(token.isAiTypo)}
+              aiSuggestedSpelling={token.aiSuggestedSpelling}
+              aiExplanation={token.aiExplanation}
               dictionary={dictionary}
               onPick={handlePick}
+              onConfirmAiTypo={onConfirmAiTypo}
             />
           )}
           <Popover.Arrow className="fill-white" width={14} height={7} />
@@ -116,16 +122,24 @@ function DynamicInsight({
   start,
   fullText,
   isTypoFlagged,
+  isAiTypo,
+  aiSuggestedSpelling,
+  aiExplanation,
   dictionary,
   onPick,
+  onConfirmAiTypo,
 }: {
   isOpen: boolean;
   word: string;
   start: number;
   fullText: string;
   isTypoFlagged: boolean;
+  isAiTypo: boolean;
+  aiSuggestedSpelling?: string;
+  aiExplanation?: string;
   dictionary: Set<string> | null;
   onPick: (replacement: string) => void;
+  onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
 
@@ -136,25 +150,46 @@ function DynamicInsight({
     fetchWordInsight(word, contextSentence).then((result) => {
       if (cancelled) return;
       // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
-      // クライアント側の修正候補（localFallback）の方が有用なので上書きしない。
+      // クライアント側の修正候補（instantFallback）の方が有用なので上書きしない。
       if (isTypoFlagged && result.source === "unknown") return;
       setInsight(result);
+      // クリックして初めてAIが isTypo: true と判定した単語も、以後は
+      // 文章全体でリアルタイムに赤ハイライト・件数へ反映されるようにする。
+      if (result.isTypo && result.suggestedSpelling) {
+        onConfirmAiTypo(word, result.suggestedSpelling, result.insight);
+      }
     });
     return () => {
       cancelled = true;
     };
-  }, [isOpen, word, start, fullText, isTypoFlagged]);
+  }, [isOpen, word, start, fullText, isTypoFlagged, onConfirmAiTypo]);
 
-  // 赤色（辞書に無い語）と判定済みの単語は、AIの応答を待たずに
-  // クライアント側の編集距離ベースの候補を即座に表示する（リアルタイム性を優先）。
-  // AIの応答が届き次第（fetchWordInsight → insight state）、より文脈に即した内容に置き換わる。
-  const localFallback = useMemo(
-    () => (isTypoFlagged && dictionary ? buildLocalTypoInsight(word, dictionary) : null),
-    [isTypoFlagged, dictionary, word],
-  );
+  // 事前スキャン・過去のクリックでAIが文脈的な誤りだと確認済みの場合は、
+  // それを最優先の即時表示として使う（辞書に無い語の編集距離ベースの
+  // 推測よりも、実際にAIが確認した候補の方が信頼できるため）。
+  // それ以外で辞書に無い語（isUnknownWord）の場合は、編集距離ベースの
+  // 候補をAIの応答を待たずに即座に表示する（リアルタイム性を優先）。
+  const instantFallback = useMemo(() => {
+    if (isAiTypo && aiSuggestedSpelling) {
+      return {
+        word: word.toLowerCase(),
+        source: "ai" as const,
+        badgeLabel: "AIによる解説",
+        insight:
+          aiExplanation ?? `"${word}" は文脈上、誤字である可能性が高いと判断されました。`,
+        suggestions: [],
+        isTypo: true,
+        suggestedSpelling: aiSuggestedSpelling,
+      } satisfies WordInsight;
+    }
+    if (isTypoFlagged && dictionary) {
+      return buildLocalTypoInsight(word, dictionary);
+    }
+    return null;
+  }, [isAiTypo, aiSuggestedSpelling, aiExplanation, isTypoFlagged, dictionary, word]);
 
   const resolved =
-    insight && insight.word === word.toLowerCase() ? insight : localFallback;
+    insight && insight.word === word.toLowerCase() ? insight : instantFallback;
 
   if (!resolved) {
     return (
