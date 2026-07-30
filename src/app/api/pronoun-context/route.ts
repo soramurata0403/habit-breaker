@@ -1,3 +1,6 @@
+import { MAX_TEXT_LENGTH as MAX_ANALYZE_LENGTH } from "@/lib/config";
+import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
+
 export const runtime = "nodejs";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -95,6 +98,9 @@ function isValidOccurrence(value: unknown): value is Occurrence {
 }
 
 export async function POST(request: Request) {
+  const limit = checkRateLimit(request);
+  if (!limit.ok) return rateLimitResponse(limit);
+
   let body: unknown;
   try {
     body = await request.json();
@@ -106,6 +112,13 @@ export async function POST(request: Request) {
 
   if (!Array.isArray(occurrences) || occurrences.length === 0) {
     return Response.json({ results: [] }, { status: 200 });
+  }
+
+  if (typeof text === "string" && text.length > MAX_ANALYZE_LENGTH) {
+    return Response.json(
+      { error: `解析できるのは${MAX_ANALYZE_LENGTH}文字までです。` },
+      { status: 413 },
+    );
   }
 
   const safeOccurrences = occurrences

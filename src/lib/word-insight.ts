@@ -225,6 +225,15 @@ export async function checkPronounContext(
 }
 
 /**
+ * その単語の解説を出すのに /api/word-insight（＝OpenAI呼び出し）が必要かどうか。
+ * コーパスルールに載っている単語は通信せず即座に返せるため、
+ * 利用回数のカウント対象から除外できる。
+ */
+export function requiresApiCall(rawWord: string): boolean {
+  return !habitRuleMap.has(rawWord.toLowerCase());
+}
+
+/**
  * 単語ごとの解説・言い換え候補を取得するフック。
  *
  * 優先順位:

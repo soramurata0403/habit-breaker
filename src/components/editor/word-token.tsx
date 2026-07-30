@@ -7,8 +7,10 @@ import { ArrowRight, Loader2, Sparkles, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getContextSentence, getExtendedContext, matchCase, type Token } from "@/lib/tokenize";
 import { suggestCorrections } from "@/lib/spellcheck";
-import { fetchWordInsight, type WordInsight } from "@/lib/word-insight";
+import { fetchWordInsight, requiresApiCall, type WordInsight } from "@/lib/word-insight";
 import { contextualPronouns, type Suggestion } from "@/data/habit-rules";
+import { MAX_DAILY_REQUESTS, MAX_TEXT_LENGTH } from "@/lib/config";
+import { consumeRequest } from "@/lib/usage-store";
 
 type WordTokenProps = {
   token: Extract<Token, { type: "word" }>;
@@ -16,6 +18,8 @@ type WordTokenProps = {
   dictionary: Set<string> | null;
   isOpen: boolean;
   isJumpTarget?: boolean;
+  isUsageExhausted?: boolean;
+  isOverLength?: boolean;
   onOpenChange: (open: boolean) => void;
   onReplace: (start: number, end: number, replacement: string) => void;
   onConfirmAiTypo: (word: string, suggestedSpelling: string, explanation: string) => void;
@@ -28,6 +32,8 @@ export function WordToken({
   dictionary,
   isOpen,
   isJumpTarget = false,
+  isUsageExhausted = false,
+  isOverLength = false,
   onOpenChange,
   onReplace,
   onConfirmAiTypo,
@@ -118,6 +124,8 @@ export function WordToken({
               word={token.text}
               start={token.start}
               fullText={fullText}
+              isUsageExhausted={isUsageExhausted}
+              isOverLength={isOverLength}
               isTypoFlagged={isTypoFlagged}
               isAiTypo={Boolean(token.isAiTypo)}
               aiSuggestedSpelling={token.aiSuggestedSpelling}
@@ -156,6 +164,8 @@ function DynamicInsight({
   word,
   start,
   fullText,
+  isUsageExhausted,
+  isOverLength,
   isTypoFlagged,
   isAiTypo,
   aiSuggestedSpelling,
@@ -169,6 +179,8 @@ function DynamicInsight({
   word: string;
   start: number;
   fullText: string;
+  isUsageExhausted: boolean;
+  isOverLength: boolean;
   isTypoFlagged: boolean;
   isAiTypo: boolean;
   aiSuggestedSpelling?: string;
@@ -212,14 +224,20 @@ function DynamicInsight({
     ? instantFallback.suggestedSpelling
     : undefined;
 
+  // コーパスルールに載っている単語は通信不要で即座に返せるため、
+  // 利用回数の上限や文字数超過の影響を受けない。
+  const needsApi = requiresApiCall(word);
+  const isBlocked = needsApi && (isUsageExhausted || isOverLength);
+
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isBlocked) return;
     let cancelled = false;
     // we/us/our は先行詞（例: 前文で紹介された人物名）が前文にあることが
     // 多いため、直前の1文も含めた文脈をAIに渡す。それ以外は現在の文のみ。
     const contextSentence = contextualPronouns.has(word.toLowerCase())
       ? getExtendedContext(fullText, start, 1)
       : getContextSentence(fullText, start);
+    if (needsApi) consumeRequest();
     fetchWordInsight(word, contextSentence, fullText).then((result) => {
       if (cancelled) return;
       // 赤色判定済みの単語で、AI側が「データなし」しか返せなかった場合は、
@@ -255,6 +273,8 @@ function DynamicInsight({
     };
   }, [
     isOpen,
+    isBlocked,
+    needsApi,
     word,
     start,
     fullText,
@@ -266,6 +286,19 @@ function DynamicInsight({
 
   const resolved =
     insight && insight.word === word.toLowerCase() ? insight : instantFallback;
+
+  // 上限到達・文字数超過で通信できず、ローカルの候補も無い場合は理由を表示する。
+  if (isBlocked && !resolved) {
+    return (
+      <div className="py-2">
+        <p className="text-sm leading-relaxed text-neutral-600">
+          {isOverLength
+            ? `解析できるのは${MAX_TEXT_LENGTH}文字までです。文字数を減らすと解説を表示できます。`
+            : `本日の無料利用枠（${MAX_DAILY_REQUESTS}回）に達しました。明日またお試しください。`}
+        </p>
+      </div>
+    );
+  }
 
   if (!resolved) {
     return (

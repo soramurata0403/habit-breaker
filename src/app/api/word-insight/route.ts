@@ -1,4 +1,5 @@
 import { contextualPronouns } from "@/data/habit-rules";
+import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
 
 export const runtime = "nodejs";
 
@@ -114,6 +115,9 @@ function isSuccessPayload(value: unknown, allowEmptyCandidates: boolean): value 
 }
 
 export async function POST(request: Request) {
+  const limit = checkRateLimit(request);
+  if (!limit.ok) return rateLimitResponse(limit);
+
   let body: unknown;
   try {
     body = await request.json();

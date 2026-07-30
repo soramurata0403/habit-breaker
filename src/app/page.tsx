@@ -1,6 +1,7 @@
-import { BookOpenCheck } from "lucide-react";
+import { BookOpenCheck, MessageSquarePlus } from "lucide-react";
 
 import { TextEditor } from "@/components/editor/text-editor";
+import { FEEDBACK_FORM_URL } from "@/lib/config";
 
 export default function Home() {
   return (
@@ -28,8 +29,19 @@ export default function Home() {
           <TextEditor />
         </main>
 
-        <footer className="mt-10 text-center text-xs text-neutral-400">
-          MVP prototype — コーパスルールはシードデータとして静的に組み込まれています。
+        <footer className="mt-10 flex flex-col items-center gap-4">
+          <a
+            href={FEEDBACK_FORM_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-full border border-teal-200 bg-white px-4 py-2 text-sm font-medium text-teal-700 shadow-sm transition-colors hover:border-teal-300 hover:bg-teal-50"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            ご意見・バグ報告
+          </a>
+          <p className="text-center text-xs text-neutral-400">
+            MVP prototype — コーパスルールはシードデータとして静的に組み込まれています。
+          </p>
         </footer>
       </div>
     </div>

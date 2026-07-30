@@ -24,6 +24,8 @@ import { SAMPLE_TEXT, contextualPronouns } from "@/data/habit-rules";
 import { loadDictionary } from "@/lib/spellcheck";
 import { checkPronounContext, scanTextForContextualTypos } from "@/lib/word-insight";
 import { buildIssueItems } from "@/lib/issue-list";
+import { COOLDOWN_MS, MAX_DAILY_REQUESTS, MAX_TEXT_LENGTH } from "@/lib/config";
+import { consumeRequest, useUsageLimit } from "@/lib/usage-store";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 import { IssuePanel, type IssuePanelTab } from "./issue-panel";
@@ -81,6 +83,11 @@ export function TextEditor() {
   const [jumpTargetId, setJumpTargetId] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
+  const lastAnalysisAtRef = useRef(0);
+
+  const { used, remaining, isExhausted } = useUsageLimit();
+  const isOverLength = text.length > MAX_TEXT_LENGTH;
 
   useEffect(() => {
     return () => {
@@ -103,34 +110,74 @@ export function TextEditor() {
     return () => clearTimeout(timeoutId);
   }, [text]);
 
-  // 入力が確定した（＝一定時間止まった）タイミングで、文章全体に対して
-  // 文脈的なタイポ（例: leaned → learned）の事前スキャンを行う。
-  // タップする前から赤ハイライトを付けられるようにするための処理。
+  // 入力が確定した（＝一定時間止まった）タイミングで、文章全体に対する
+  // 事前スキャンを1回の「解析」としてまとめて実行する。
+  //   - 文脈的なタイポ（例: leaned → learned）の検出
+  //   - we/us/our が曖昧な一般論の主語かどうかの判定
+  // どちらもタップ前からハイライトを付けるための処理で、必ず同時に走るため、
+  // 利用回数のカウントとクールダウンは「この1ラウンド」単位で扱う。
   useEffect(() => {
     if (!debouncedText || debouncedText !== text) return;
+    // 上限到達時・文字数超過時は通信を行わない（ローカル辞書とコーパス
+    // ルールによるハイライトはそのまま動作し続ける）。
+    if (isExhausted || isOverLength) return;
+
     let cancelled = false;
-    scanTextForContextualTypos(debouncedText).then((typos) => {
-      if (cancelled || typos.length === 0) return;
-      setAiTypos((prev) => {
-        const next = new Map(prev);
-        let changed = false;
-        for (const typo of typos) {
-          const key = typo.word.toLowerCase();
-          if (!next.has(key)) {
-            next.set(key, {
-              suggestedSpelling: typo.suggestedSpelling,
-              explanation: typo.explanation,
-            });
-            changed = true;
+
+    // 直前の解析から COOLDOWN_MS が経つまで次の解析を遅らせることで、
+    // 連続入力中にリクエストが立て続けに飛ぶのを防ぐ。
+    const waitMs = Math.max(0, COOLDOWN_MS - (Date.now() - lastAnalysisAtRef.current));
+
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return;
+      lastAnalysisAtRef.current = Date.now();
+      consumeRequest();
+
+      scanTextForContextualTypos(debouncedText).then((typos) => {
+        if (cancelled || typos.length === 0) return;
+        setAiTypos((prev) => {
+          const next = new Map(prev);
+          let changed = false;
+          for (const typo of typos) {
+            const key = typo.word.toLowerCase();
+            if (!next.has(key)) {
+              next.set(key, {
+                suggestedSpelling: typo.suggestedSpelling,
+                explanation: typo.explanation,
+              });
+              changed = true;
+            }
           }
-        }
-        return changed ? next : prev;
+          return changed ? next : prev;
+        });
       });
-    });
+
+      const pronounTokens = tokenize(debouncedText).filter(
+        (token): token is Extract<Token, { type: "word" }> =>
+          token.type === "word" && contextualPronouns.has(token.text.toLowerCase()),
+      );
+
+      const occurrences = pronounTokens.slice(0, MAX_PRONOUN_OCCURRENCES).map((token) => ({
+        id: token.start,
+        word: token.text,
+        // 先行詞（例: 前文で紹介された人物名）が前文にあるケースにも
+        // 対応できるよう、直前の1文も含めた文脈をAIに渡す。
+        sentence: getExtendedContext(debouncedText, token.start, 1),
+      }));
+
+      // documentText（文章全体）を渡すことで、個人的な体験談かアカデミックな
+      // 論説文かのトーン判定も行われる。
+      checkPronounContext(occurrences, debouncedText).then((vagueIds) => {
+        if (cancelled) return;
+        setVaguePronouns({ text: debouncedText, starts: vagueIds });
+      });
+    }, waitMs);
+
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
     };
-  }, [debouncedText, text]);
+  }, [debouncedText, text, isExhausted, isOverLength]);
 
   // クリック時にAI（/api/word-insight）が isTypo: true と判定した単語も、
   // 以後は文章全体でリアルタイムに赤ハイライトへ反映されるようにする。
@@ -146,40 +193,6 @@ export function TextEditor() {
     },
     [],
   );
-
-  // 入力が確定した（＝一定時間止まった）タイミングで、文章中の we/us/our の
-  // 各出現箇所についてAIに文脈判定させる（具体的な人物を指しているか、
-  // 曖昧な一般論の主語かどうか）。タップ前から黄色ハイライトを付けるための処理。
-  useEffect(() => {
-    if (!debouncedText || debouncedText !== text) return;
-    let cancelled = false;
-
-    const pronounTokens = tokenize(debouncedText).filter(
-      (token): token is Extract<Token, { type: "word" }> =>
-        token.type === "word" && contextualPronouns.has(token.text.toLowerCase()),
-    );
-
-    const occurrences = pronounTokens.slice(0, MAX_PRONOUN_OCCURRENCES).map((token) => ({
-      id: token.start,
-      word: token.text,
-      // 先行詞（例: 前文で紹介された人物名）が前文にあるケースにも
-      // 対応できるよう、直前の1文も含めた文脈をAIに渡す。
-      sentence: getExtendedContext(debouncedText, token.start, 1),
-    }));
-
-    // occurrences が空の場合も checkPronounContext は（通信を行わず）即座に
-    // 空集合を返すため、setState は常に then() の中でのみ行われる。
-    // documentText（文章全体）を渡すことで、個人的な体験談かアカデミックな
-    // 論説文かのトーン判定も行われる。
-    checkPronounContext(occurrences, debouncedText).then((vagueIds) => {
-      if (cancelled) return;
-      setVaguePronouns({ text: debouncedText, starts: vagueIds });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedText, text]);
 
   // クリック時にAI（/api/word-insight）が「曖昧な一般論の主語」と判定した
   // we/us/our も、以後はリアルタイムに黄色ハイライトへ反映されるようにする。
@@ -325,6 +338,8 @@ export function TextEditor() {
         dictionary={dictionary}
         isOpen={activeKey === token.key}
         isJumpTarget={jumpTargetId === token.start}
+        isUsageExhausted={isExhausted}
+        isOverLength={isOverLength}
         onOpenChange={(open) => setActiveKey(open ? token.key : null)}
         onReplace={handleReplace}
         onConfirmAiTypo={handleConfirmAiTypo}
@@ -429,9 +444,32 @@ export function TextEditor() {
           </div>
         </div>
 
+        {isOverLength && (
+          <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-800">
+            解析できるのは{MAX_TEXT_LENGTH}文字までです（現在 {text.length} 文字）。
+            文字数を減らすと自動的に解析が再開されます。
+          </p>
+        )}
+
+        {isExhausted && !isOverLength && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
+            本日の無料利用枠（{MAX_DAILY_REQUESTS}回）に達しました。明日またお試しください。
+          </p>
+        )}
+
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <span className="text-sm font-medium whitespace-nowrap text-neutral-600">
-            {text.length} 文字
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span
+              className={cn(
+                "text-sm font-medium whitespace-nowrap",
+                isOverLength ? "text-red-600" : "text-neutral-600",
+              )}
+            >
+              {text.length} / {MAX_TEXT_LENGTH} 文字
+            </span>
+            <span className="text-xs whitespace-nowrap text-neutral-400">
+              本日の解析 {used} / {MAX_DAILY_REQUESTS} 回（残り {remaining} 回）
+            </span>
           </span>
           <span className="flex flex-wrap gap-2">
             <button
