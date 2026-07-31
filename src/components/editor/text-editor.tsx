@@ -593,7 +593,9 @@ export function TextEditor() {
     <div className="w-full">
       <div>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-neutral-500">
+          {/* 凡例と案内文は同じ濃さ・太さに揃える。色ドットとアイコンだけが
+              色を持ち、テキストは一律で読みやすいコントラストにする。 */}
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-neutral-700">
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
               黄色：言い換え推奨の癖のある単語
@@ -602,7 +604,7 @@ export function TextEditor() {
               <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
               赤色：スペルミスの疑い
             </span>
-            <span className="flex items-center gap-1.5 font-medium text-neutral-700">
+            <span className="flex items-center gap-1.5">
               <Lightbulb className="h-4 w-4 text-amber-500" />
               単語をダブルクリックすると言い換えを探せます
             </span>
