@@ -80,6 +80,16 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTS向けの英文エッセイを�
   "decided" 1語だけにすること。どちらの場合も word は**原形にすべき動詞**
   （この例なら "decided"）にすること。
 
+### A3. 動詞の多重連鎖（severity: "error"）
+助動詞や動詞が意味なく2つ以上続いている箇所は、明確な文法違反として指摘すること。
+- 例: "I would take be baptized" → "would take be" は動詞が3つ連続していて成立しない。
+  phrase="take be", correction="be" のように**余分な動詞を削る**か、
+  phrase="would take be baptized", correction="would be baptized" のように
+  句全体を正しい形に直すこと
+- 例: "I will go eat be there" → 不要な動詞を削って "will be there"
+- 助動詞の後に原形が2つ続く（"would take be"）、be動詞の後に原形が続く
+  （"is go"）などは、いずれも成立しないので必ず指摘すること
+
 ### B. アカデミックでない記号（severity: "error"）
 TOEFL / IELTS の答案では使えない記号は書式違反として指摘すること。
 - 感嘆符（"!" や "!!"）→ correction は "." にすること
@@ -239,6 +249,20 @@ must / not / to など）だけ。**
 - 冠詞の補い（G）や "how to"（H）のように語を差し替える場合は、
   phrase を**その1語だけ**に絞り、前後の語を含めないこと。
 
+## 隣り合う語を別々に指摘しないこと（最重要）
+一方を直すともう一方の品詞や文法的な役割が変わる関係にある語は、
+**必ずまとめて1つの指摘**にすること。別々に出すと、両方適用したときに
+文が壊れる。
+- 誤り例: "if I take baptism" に対して
+  ①word="take", correction="would take" と
+  ②word="baptism", correction="be baptized" を**両方**出す
+  → 両方適用すると "would take be baptized" になり文法が壊れる
+- 正しくは、動詞＋名詞のかたまりを1つの phrase にすること:
+  word="take", phrase="take baptism", correction="would be baptized"
+  （または "would get baptized"）
+- 同じ節の中で、隣接する語や重なる範囲を対象にした指摘を2つ以上出さないこと。
+  1つの箇所につき指摘は1つだけにすること。
+
 ## 意味のない提案を出さないこと
 - **phrase と correction が同じ文字列になる提案は絶対に出さないこと**
   （"a" → "a" のように、適用しても何も変わらない指摘は無意味）
@@ -276,6 +300,40 @@ function isSuccessPayload(value: unknown): value is SuccessPayload {
       // （必須にするとフィールド1つの欠落で指摘ごと失われてしまうため）。
     );
   });
+}
+
+/**
+ * 隣接・重複する指摘を1つに絞る。
+ *
+ * "take baptism" を "take" と "baptism" に分けて指摘されると、両方適用したときに
+ * "would take be baptized" のように文法が壊れる。片方を直すともう片方の
+ * 文法的な役割が変わる関係にあるため、範囲が重なる・隣接する指摘は
+ * 範囲の広い方（より多くを1度に直せる方）だけを残す。
+ */
+function dropOverlappingIssues(issues: IssueEntry[], text: string): IssueEntry[] {
+  const located = issues
+    .map((issue) => {
+      const at = text.indexOf(issue.phrase.trim());
+      return { issue, start: at, end: at + issue.phrase.trim().length };
+    })
+    .filter((entry) => entry.start !== -1)
+    // 長い範囲を優先して残したいので、広い順に並べる。
+    .sort((a, b) => b.end - b.start - (a.end - a.start) || a.start - b.start);
+
+  const kept: typeof located = [];
+  for (const candidate of located) {
+    const conflicts = kept.some((existing) => {
+      // 範囲が重なっている、または間が空白だけで隣接している。
+      if (candidate.start < existing.end && existing.start < candidate.end) return true;
+      const gapStart = Math.min(existing.end, candidate.end);
+      const gapEnd = Math.max(existing.start, candidate.start);
+      return gapEnd >= gapStart && /^\s*$/.test(text.slice(gapStart, gapEnd));
+    });
+    if (!conflicts) kept.push(candidate);
+  }
+
+  // 元の並び順に戻して返す。
+  return kept.sort((a, b) => a.start - b.start).map((entry) => entry.issue);
 }
 
 /** severity が欠けている・不正な場合は誤り（赤）として扱う。 */
@@ -442,7 +500,7 @@ export async function POST(request: Request) {
         return true;
       });
 
-    return Response.json({ issues }, { status: 200 });
+    return Response.json({ issues: dropOverlappingIssues(issues, text) }, { status: 200 });
   } catch (error) {
     const isAbort = error instanceof Error && error.name === "AbortError";
     console.error("text-scan API route error:", error);

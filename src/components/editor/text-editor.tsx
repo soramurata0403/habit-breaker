@@ -18,6 +18,7 @@ import {
   applyPronounContextFlags,
   fitClauseForm,
   getExtendedContext,
+  getSentenceBounds,
   preserveSubject,
   tokenize,
   type AiTypoInfo,
@@ -374,6 +375,29 @@ export function TextEditor() {
     //  2. "I believe" を動詞だけの候補で置き換える際に主語を補う
     const clauseFitted = fitClauseForm(text.slice(0, start), replacement);
     const safeReplacement = preserveSubject(text.slice(start, end), clauseFitted);
+
+    // 置換した文の中にあった他の指摘は、文の構造が変わって当てはまらなく
+    // なっている可能性が高い（例: "take" を "would take" に直した後の
+    // "baptism" → "be baptized" は "would take be baptized" を生む）。
+    // 再スキャンで作り直されるまで、その文の指摘は一旦無効化する。
+    const sentence = getSentenceBounds(text, start);
+    const affectedWords = new Set(
+      text
+        .slice(sentence.start, sentence.end)
+        .toLowerCase()
+        .match(/[a-z]+(?:['’][a-z]+)?/g) ?? [],
+    );
+    setAiTypos((prev) => {
+      let changed = false;
+      const remaining = new Map(prev);
+      for (const key of prev.keys()) {
+        if (affectedWords.has(key)) {
+          remaining.delete(key);
+          changed = true;
+        }
+      }
+      return changed ? remaining : prev;
+    });
 
     const next = text.slice(0, start) + safeReplacement + text.slice(end);
     const caret = start + safeReplacement.length;

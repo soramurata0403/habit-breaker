@@ -436,6 +436,20 @@ export function getContextSentence(text: string, position: number): string {
   return (remainder || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
 }
 
+/**
+ * `position` を含む一文の範囲（文末記号を含む）を返す。
+ * 置換した箇所と同じ文にある古い指摘を無効化する際の範囲判定に使う。
+ */
+export function getSentenceBounds(
+  text: string,
+  position: number,
+): { start: number; end: number } {
+  for (const range of getSentenceRanges(text)) {
+    if (position < range.end) return range;
+  }
+  return { start: 0, end: text.length };
+}
+
 function getSentenceRanges(text: string): { start: number; end: number }[] {
   const ranges: { start: number; end: number }[] = [];
   const boundaryPattern = /[.!?](?:\s+|$)/g;
