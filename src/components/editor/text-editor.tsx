@@ -338,8 +338,8 @@ export function TextEditor() {
     return applyPronounContextFlags(withTypos, vagueStarts);
   }, [text, spellcheckDictionary, aiTypos, vagueStarts]);
   const { improvements: improvementItems, spelling: spellingItems } = useMemo(
-    () => buildIssueItems(tokens),
-    [tokens],
+    () => buildIssueItems(tokens, text),
+    [tokens, text],
   );
   const highlightCount = improvementItems.length;
   const typoCount = spellingItems.length;

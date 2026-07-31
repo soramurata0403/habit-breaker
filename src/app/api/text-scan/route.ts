@@ -1,5 +1,10 @@
 import { MAX_TEXT_LENGTH as MAX_ANALYZE_LENGTH } from "@/lib/config";
-import { isSafeReplacementScope } from "@/lib/phrase-scope";
+import {
+  addsLeadingDeterminer,
+  endsWithDeterminer,
+  isNoOpCorrection,
+  isSafeReplacementScope,
+} from "@/lib/phrase-scope";
 import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
 
 export const runtime = "nodejs";
@@ -82,7 +87,9 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
 前置詞・冠詞・助動詞などの機能語が重複している場合は必ず指摘すること。
 - 例: "at around at 9" → phrase="at around at", correction="at around"
 - 例: "in in the morning" → phrase="in in", correction="in"
-- 例: "the the" / "to to" / "is is" なども同様
+- **冠詞の重複も必ず拾うこと**: "a a lesson" → phrase="a a", correction="a"、
+  "the the" → phrase="the the", correction="the"
+- 例: "to to" / "is is" / "and and" なども同様
 - **correction は phrase から余分な語を取り除いただけの形にすること**
   （新しい語を持ち込まず、残す語は元のまま）
 
@@ -105,6 +112,13 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
 - **phrase はその名詞1語だけ**にし、correction に冠詞を付けた形を入れること
   例: word="lesson", phrase="lesson", correction="a lesson"
 - 固有名詞・不可算名詞（information, advice, water など）は対象外
+
+**【最重要】冠詞を足す前に、その名詞の直前を必ず確認すること。**
+直前に既に冠詞（a / an / the）・所有格（my / your / his / her / its / our / their）・
+指示詞（this / that / these / those）がある場合は、**絶対に冠詞を足す提案をしないこと**。
+- 誤り例: "I took a lesson" に対して phrase="lesson", correction="a lesson"
+  → 適用すると "I took a a lesson" になり、冠詞が増殖してしまう
+- "a lesson" のように既に正しく冠詞が付いている名詞句は、そもそも指摘対象外
 
 ### H. "how to" の直後の品詞（severity: "error"）
 "how to" の直後は動詞の原形でなければならない。名詞が来ている場合は指摘すること。
@@ -195,6 +209,11 @@ must / not / to など）だけ。**
   （先頭以外を word にすると、その手前の語まで置換範囲に入り消えてしまう）
 - 冠詞の補い（G）や "how to"（H）のように語を差し替える場合は、
   phrase を**その1語だけ**に絞り、前後の語を含めないこと。
+
+## 意味のない提案を出さないこと
+- **phrase と correction が同じ文字列になる提案は絶対に出さないこと**
+  （"a" → "a" のように、適用しても何も変わらない指摘は無意味）
+- 語を足す提案をする場合は、その語が本当にまだ存在しないことを原文で確認すること
 
 ## 置換後の文を必ず読み返すこと
 correction を phrase の位置に入れた文を組み立て直し、文法として成立するか確認すること。
@@ -360,7 +379,21 @@ export async function POST(request: Request) {
 
         // 原文にそのまま現れない句は置換範囲を特定できないため除外する。
         if (!text.includes(phrase)) return false;
-        if (issue.correction.trim() === phrase) return false;
+        // 適用しても内容が変わらない提案（"a" → "a" など）は無意味なので除外する。
+        if (isNoOpCorrection(phrase, issue.correction)) return false;
+
+        // 冠詞を足す提案は、原文中のどの出現も直前に冠詞・所有格がある場合、
+        // 適用すると必ず "a a lesson" のように重複するため除外する。
+        if (addsLeadingDeterminer(phrase, issue.correction)) {
+          let hasSafeOccurrence = false;
+          for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + 1)) {
+            if (!endsWithDeterminer(text.slice(0, at))) {
+              hasSafeOccurrence = true;
+              break;
+            }
+          }
+          if (!hasSafeOccurrence) return false;
+        }
 
         // 置換範囲が広すぎるものは除外する。対象語と無関係な語（他の動詞・
         // 目的語など）を巻き込んだ句を許すと、適用時にそれらが消えてしまう。

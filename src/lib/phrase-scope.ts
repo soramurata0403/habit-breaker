@@ -87,6 +87,59 @@ export function isSafePhraseScope(word: string, phrase: string): boolean {
 
 export type IssueSeverity = "error" | "style";
 
+// 冠詞・所有格・指示詞。名詞の前にこれらが既にある場合、さらに冠詞を
+// 足す提案（"lesson" → "a lesson"）を適用すると "a a lesson" になってしまう。
+const DETERMINERS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "my",
+  "your",
+  "his",
+  "her",
+  "its",
+  "our",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+]);
+
+/** 文字列が冠詞・限定詞で始まっていればその語を返す。 */
+function leadingDeterminer(value: string): string | null {
+  const match = value.trim().toLowerCase().match(/^([a-z]+)\b/);
+  return match && DETERMINERS.has(match[1]) ? match[1] : null;
+}
+
+/** 直前のテキストが冠詞・限定詞で終わっているか（末尾の空白は無視）。 */
+export function endsWithDeterminer(precedingText: string): boolean {
+  const match = precedingText.toLowerCase().match(/([a-z]+)\s*$/);
+  return Boolean(match && DETERMINERS.has(match[1]));
+}
+
+/** correction が、元の phrase に無かった冠詞・限定詞を新たに前置しているか。 */
+export function addsLeadingDeterminer(phrase: string, correction: string): boolean {
+  return leadingDeterminer(correction) !== null && leadingDeterminer(phrase) === null;
+}
+
+/**
+ * その置換を適用すると冠詞が重複するか。
+ * "I took a lesson" の "lesson" に "a lesson" を当てると "a a lesson" になる。
+ */
+export function wouldDuplicateDeterminer(
+  precedingText: string,
+  phrase: string,
+  correction: string,
+): boolean {
+  return addsLeadingDeterminer(phrase, correction) && endsWithDeterminer(precedingText);
+}
+
+/** 対象と修正案が同一で、適用しても何も変わらない無意味な提案か。 */
+export function isNoOpCorrection(phrase: string, correction: string): boolean {
+  return phrase.trim() === correction.trim();
+}
+
 /** 語の重複除去などで許容する最大語数。 */
 const MAX_SUBSEQUENCE_PHRASE_WORDS = 6;
 

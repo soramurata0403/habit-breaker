@@ -6,7 +6,12 @@ import {
   type HabitRule,
 } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
-import { isSafeReplacementScope, type IssueSeverity } from "@/lib/phrase-scope";
+import {
+  isNoOpCorrection,
+  isSafeReplacementScope,
+  wouldDuplicateDeterminer,
+  type IssueSeverity,
+} from "@/lib/phrase-scope";
 
 export type AiTypoInfo = {
   /** 置換対象の原文の範囲。単語1語のことも "am believing" のような句のこともある。 */
@@ -305,6 +310,21 @@ export function applyAiTypoFlags(
     // 単語1語の範囲に狭めたうえで指摘として残す。
     const phraseCoversOneWord = match.phrase.trim().toLowerCase() === token.text.toLowerCase();
     if (isScopeSafe && !range && !phraseCoversOneWord) return token;
+
+    const replaceStart = range?.start ?? token.start;
+    const replaceEnd = range?.end ?? token.end;
+
+    // 適用しても内容が変わらない提案は出さない。
+    if (isNoOpCorrection(text.slice(replaceStart, replaceEnd), match.correction)) {
+      return token;
+    }
+
+    // 冠詞を足す提案は、その名詞の直前に既に冠詞・所有格がある場合は出さない。
+    // これが無いと "a lesson" に "a lesson" を当てて "a a lesson" となり、
+    // 適用のたびに冠詞が増え続けてしまう。
+    if (wouldDuplicateDeterminer(text.slice(0, replaceStart), match.phrase, match.correction)) {
+      return token;
+    }
 
     return {
       ...token,

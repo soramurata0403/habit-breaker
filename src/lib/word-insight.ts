@@ -1,4 +1,5 @@
 import { contextualPronouns, habitRuleMap, type Suggestion } from "@/data/habit-rules";
+import { isNoOpCorrection } from "@/lib/phrase-scope";
 import { genericSynonymMap } from "@/data/generic-synonyms";
 
 export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown" | "typo-local";
@@ -174,6 +175,8 @@ export async function scanTextForContextualTypos(text: string): Promise<ScanOutc
           typeof t.explanation === "string"
         );
       })
+      // 適用しても内容が変わらない提案（"a" → "a" など）はここでも落とす。
+      .filter((item) => !isNoOpCorrection(item.phrase, item.correction))
       .map((item) => ({
         word: item.word,
         phrase: item.phrase,

@@ -15,12 +15,21 @@ export type IssueItem = {
  * （start）を使い、本文中のハイライト要素（id={`token-${start}`}）への
  * ジャンプに利用する。
  */
-export function buildIssueItems(tokens: Token[]): {
+export function buildIssueItems(
+  tokens: Token[],
+  text: string,
+): {
   improvements: IssueItem[];
   spelling: IssueItem[];
 } {
   const improvements: IssueItem[] = [];
   const spelling: IssueItem[] = [];
+
+  /** その指摘で実際に置き換えられる原文の範囲。 */
+  const phraseOf = (token: Extract<Token, { type: "word" }>) =>
+    token.aiReplaceStart !== undefined && token.aiReplaceEnd !== undefined
+      ? text.slice(token.aiReplaceStart, token.aiReplaceEnd)
+      : token.text;
 
   for (const token of tokens) {
     if (token.type !== "word") continue;
@@ -55,9 +64,14 @@ export function buildIssueItems(tokens: Token[]): {
         id: token.start,
         tokenKey: token.key,
         word: token.text,
+        // 句レベルの修正（例: "a a" → "a"）では、単語だけを見せると
+        // 「a → a」のように無意味な提案に見えてしまうため、
+        // 置換される範囲そのものを表示する。
         detail:
           token.isAiTypo && token.aiCorrection
-            ? `もしかして: "${token.aiCorrection}"`
+            ? phraseOf(token) && phraseOf(token) !== token.text
+              ? `"${phraseOf(token)}" → "${token.aiCorrection}"`
+              : `もしかして: "${token.aiCorrection}"`
             : "辞書に見つからない単語です。スペルミスの可能性があります。",
       });
     }
