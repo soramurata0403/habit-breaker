@@ -7,6 +7,7 @@ import {
 } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
 import {
+  dropDuplicatedLeadingWords,
   isNoOpCorrection,
   isSafeReplacementScope,
   wouldDuplicateDeterminer,
@@ -314,15 +315,22 @@ export function applyAiTypoFlags(
     const replaceStart = range?.start ?? token.start;
     const replaceEnd = range?.end ?? token.end;
 
+    // 句の範囲を使えず単語1語に狭めた場合、修正案の先頭に直前と同じ語が
+    // 残っていると重複してしまう（"I didn't " に "didn't decide" を当てると
+    // "I didn't didn't decide" になる）。その分を取り除く。
+    const correction = range
+      ? match.correction
+      : dropDuplicatedLeadingWords(text.slice(0, replaceStart), match.correction);
+
     // 適用しても内容が変わらない提案は出さない。
-    if (isNoOpCorrection(text.slice(replaceStart, replaceEnd), match.correction)) {
+    if (isNoOpCorrection(text.slice(replaceStart, replaceEnd), correction)) {
       return token;
     }
 
     // 冠詞を足す提案は、その名詞の直前に既に冠詞・所有格がある場合は出さない。
     // これが無いと "a lesson" に "a lesson" を当てて "a a lesson" となり、
     // 適用のたびに冠詞が増え続けてしまう。
-    if (wouldDuplicateDeterminer(text.slice(0, replaceStart), match.phrase, match.correction)) {
+    if (wouldDuplicateDeterminer(text.slice(0, replaceStart), match.phrase, correction)) {
       return token;
     }
 
@@ -330,10 +338,10 @@ export function applyAiTypoFlags(
       ...token,
       // error は赤（ミスの疑い）、style は黄（言い換え提案）として扱う。
       ...(match.severity === "style" ? { isAiStyle: true } : { isAiTypo: true }),
-      aiCorrection: match.correction,
+      aiCorrection: correction,
       aiExplanation: match.explanation,
-      aiReplaceStart: range?.start ?? token.start,
-      aiReplaceEnd: range?.end ?? token.end,
+      aiReplaceStart: replaceStart,
+      aiReplaceEnd: replaceEnd,
     };
   });
 }

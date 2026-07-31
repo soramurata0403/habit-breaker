@@ -57,6 +57,29 @@ const SYSTEM_PROMPT = `あなたはTOEFL / IELTS向けの英文エッセイを�
 - 周囲の動詞（woke, ate, was, went など）が過去形かどうかを手がかりに判断すること
 - 逆に、一般論・習慣を述べる現在形が正しく使われている箇所は指摘しないこと
 
+**主節と従属節の時制の一致**も確認すること。主節が過去なら、if / when / that 節の
+中の動詞も過去（または would + 原形）に揃っているべき。
+- 例: "I didn't decide if I take baptism" の "take" は、主節が過去なので
+  "would take" / "should take" などに揃えるのが自然。
+  word="take", phrase="take", correction="would take", severity="error"
+- ただし、従属節が現在も変わらない事実・一般論を述べている場合は指摘しないこと
+
+### A2. 助動詞の直後は必ず動詞の原形（severity: "error"）
+次の語の直後に**原形以外**（過去形・過去分詞・三単現のs形・ing形）が来ていたら、
+見逃さず必ず指摘すること。これは最も基本的で頻出の文法エラー。
+- 対象の助動詞: do / does / did / don't / doesn't / didn't /
+  can / can't / could / couldn't / will / won't / would / wouldn't /
+  shall / should / shouldn't / may / might / must / mustn't
+- 例: "I didn't decided" → "didn't decide"（"decided" が過去形なので誤り）
+- 例: "I didn't went" → "didn't go"
+- 例: "He does likes it" → "does like"
+- 例: "She can went" → "can go"
+- **助動詞が過去形（did / didn't / could など）でも、続く動詞は必ず原形**。
+  過去の意味は助動詞側が担っているので、動詞まで過去形にしてはいけない。
+- phrase は "didn't decided" のように助動詞から始まる形にするか、
+  "decided" 1語だけにすること。どちらの場合も word は**原形にすべき動詞**
+  （この例なら "decided"）にすること。
+
 ### B. アカデミックでない記号（severity: "error"）
 TOEFL / IELTS の答案では使えない記号は書式違反として指摘すること。
 - 感嘆符（"!" や "!!"）→ correction は "." にすること

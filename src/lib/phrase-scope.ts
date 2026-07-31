@@ -48,6 +48,25 @@ const ATTACHABLE_FUNCTION_WORDS: ReadonlySet<string> = new Set([
   "not",
   "never",
   "to",
+  // 短縮形の助動詞。"didn't decided" → "didn't decide" のように、
+  // 助動詞とセットで直すケースを句スコープとして扱えるようにする。
+  "don't",
+  "doesn't",
+  "didn't",
+  "won't",
+  "can't",
+  "cannot",
+  "couldn't",
+  "shouldn't",
+  "wouldn't",
+  "mustn't",
+  "isn't",
+  "aren't",
+  "wasn't",
+  "weren't",
+  "hasn't",
+  "haven't",
+  "hadn't",
 ]);
 
 /** 句として許容する最大語数（これを超える範囲は無条件で安全でないとみなす）。 */
@@ -133,6 +152,35 @@ export function wouldDuplicateDeterminer(
   correction: string,
 ): boolean {
   return addsLeadingDeterminer(phrase, correction) && endsWithDeterminer(precedingText);
+}
+
+/**
+ * 置換範囲を単語1語に狭めた際、修正案の先頭に「直前に既にある語」が
+ * 含まれていると重複してしまうため、その分を取り除く。
+ *
+ *   直前 "I didn't " + correction "didn't decide" → "decide"
+ *   （そのまま当てると "I didn't didn't decide" になってしまう）
+ */
+export function dropDuplicatedLeadingWords(
+  precedingText: string,
+  correction: string,
+): string {
+  let remaining = correction.trim();
+  let before = precedingText;
+
+  // 先頭の語が直前のテキストの末尾と一致する限り、繰り返し取り除く。
+  for (;;) {
+    const head = remaining.match(/^([A-Za-z]+(?:['’][A-Za-z]+)?)\b/);
+    if (!head) return remaining;
+
+    const tail = before.match(/([A-Za-z]+(?:['’][A-Za-z]+)?)\s*$/);
+    if (!tail || tail[1].toLowerCase() !== head[1].toLowerCase()) return remaining;
+
+    const next = remaining.slice(head[1].length).trimStart();
+    if (!next) return remaining;
+    remaining = next;
+    before = before.slice(0, before.length - tail[0].length);
+  }
 }
 
 /** 対象と修正案が同一で、適用しても何も変わらない無意味な提案か。 */
