@@ -17,6 +17,7 @@ import {
   applyAiTypoFlags,
   applyPronounContextFlags,
   getExtendedContext,
+  preserveSubject,
   tokenize,
   type AiTypoInfo,
   type Token,
@@ -366,8 +367,12 @@ export function TextEditor() {
     if (isExhausted) return;
     consumeRequest();
 
-    const next = text.slice(0, start) + replacement + text.slice(end);
-    const caret = start + replacement.length;
+    // "I believe" のような主語＋動詞の句を動詞だけの候補で置き換えると
+    // 主語が消えてしまうため、必要なら主語を補ってから適用する。
+    const safeReplacement = preserveSubject(text.slice(start, end), replacement);
+
+    const next = text.slice(0, start) + safeReplacement + text.slice(end);
+    const caret = start + safeReplacement.length;
     setText(next);
     // 置換はひとまとまりの操作として、独立した履歴エントリにする。
     recordCommit(next, caret, caret);
@@ -434,13 +439,25 @@ export function TextEditor() {
       return;
     }
 
+    // ブラウザによっては、ダブルクリック時に単語の後ろの空白や句読点まで
+    // 選択に含まれる（Safari / Firefox 等）。そのままだと「1単語の内側」の
+    // 判定に落ちてしまうため、前後の空白・句読点を除いた実質的な範囲で判定する。
+    let from = selectionStart;
+    let to = selectionEnd;
+    const isTrimmable = (char: string) => /[\s.,!?;:"'()[\]]/.test(char);
+    while (from < to && isTrimmable(text[from])) from++;
+    while (to > from && isTrimmable(text[to - 1])) to--;
+
+    if (from >= to) {
+      setParaphrasePrompt(null);
+      return;
+    }
+
     // 選択範囲が1単語の内側に収まっているときだけ対象にする
     // （ダブルクリックするとその単語がちょうど選択される）。
     const token = tokens.find(
       (candidate): candidate is Extract<Token, { type: "word" }> =>
-        candidate.type === "word" &&
-        candidate.start <= selectionStart &&
-        selectionEnd <= candidate.end,
+        candidate.type === "word" && candidate.start <= from && to <= candidate.end,
     );
 
     // 黄色・赤色の単語は従来どおりクリックで開けるため、ボタンは出さない。
@@ -585,8 +602,8 @@ export function TextEditor() {
               <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
               赤色：スペルミスの疑い
             </span>
-            <span className="flex items-center gap-1.5 text-neutral-400">
-              <Lightbulb className="h-3.5 w-3.5" />
+            <span className="flex items-center gap-1.5 font-medium text-neutral-700">
+              <Lightbulb className="h-4 w-4 text-amber-500" />
               単語をダブルクリックすると言い換えを探せます
             </span>
           </p>
@@ -632,6 +649,10 @@ export function TextEditor() {
               setParaphraseTarget(null);
             }}
             onSelect={handleSelectionChange}
+            // onSelect が発火しないブラウザ・操作経路の保険として、
+            // ダブルクリックとマウス操作の完了時にも同じ判定を走らせる。
+            onDoubleClick={handleSelectionChange}
+            onMouseUp={handleSelectionChange}
             onKeyDown={handleUndoRedoKeyDown}
             placeholder="ここに英文を入力または貼り付けしてください..."
             spellCheck={false}

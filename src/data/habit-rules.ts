@@ -234,10 +234,12 @@ export const habitRules: HabitRule[] = [
     word: "i believe",
     insight:
       "I believeも主観的な意見表明の定型句で、多用するとエッセイの客観性・論理性を弱めてしまいます。",
+    // このルールは "I believe"（主語＋動詞）全体を置換対象にするため、
+    // 候補側にも主語を含めておく（動詞だけにすると主語が消えてしまう）。
     suggestions: [
-      { word: "argue", nuance: "根拠を挙げて主張する" },
-      { word: "contend", nuance: "強く主張する" },
-      { word: "maintain", nuance: "一貫して主張する" },
+      { word: "I argue", nuance: "根拠を挙げて主張する" },
+      { word: "I contend", nuance: "強く主張する" },
+      { word: "I maintain", nuance: "一貫して主張する" },
     ],
   },
 ];

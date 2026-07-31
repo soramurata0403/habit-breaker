@@ -371,6 +371,44 @@ export function getExtendedContext(text: string, position: number, lookback = 1)
   return (context || trimmedFull).slice(0, MAX_CONTEXT_LENGTH);
 }
 
+// 主語＋動詞の定型句（例: "I believe"）を置き換える際、主語が落ちて
+// "Argue it is..." のようなSV崩壊が起きないよう補正するための主語一覧。
+const SUBJECT_PRONOUN_PATTERN = /^(I|we|you|they|he|she|it)\s+/i;
+
+function lowerFirst(value: string): string {
+  if (!value) return value;
+  // 全て大文字の頭字語（例: "AI"）はそのままにする。
+  if (value.length > 1 && value[1] === value[1].toUpperCase() && /[A-Z]/.test(value[1])) {
+    return value;
+  }
+  return value.charAt(0).toLowerCase() + value.slice(1);
+}
+
+/**
+ * 置換対象が「主語＋動詞」の句で、置換候補が動詞だけの場合に主語を補う。
+ *
+ *   preserveSubject("I believe", "argue")   → "I argue"
+ *   preserveSubject("I believe", "I argue") → "I argue"（既に主語があるのでそのまま）
+ *   preserveSubject("in my opinion", "arguably") → "arguably"（主語を含まないので対象外）
+ *
+ * コーパスのシードデータ側でも主語付きの候補を持たせているが、AI生成の候補が
+ * 動詞単体で返ってきた場合の安全網としてこの関数を通す。
+ */
+export function preserveSubject(original: string, replacement: string): string {
+  const match = original.match(SUBJECT_PRONOUN_PATTERN);
+  if (!match) return replacement;
+
+  const subject = match[1];
+  const trimmed = replacement.trim();
+  if (!trimmed) return replacement;
+
+  // 既に同じ主語で始まっている場合は何もしない。
+  if (new RegExp(`^${subject}\\b`, "i").test(trimmed)) return trimmed;
+
+  // 主語を補うので、続く動詞は文中扱いにして先頭を小文字へ戻す。
+  return `${subject} ${lowerFirst(trimmed)}`;
+}
+
 export function matchCase(source: string, target: string): string {
   if (!source) return target;
 
