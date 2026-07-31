@@ -112,7 +112,13 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
 - 例: "in in the morning" → phrase="in in", correction="in"
 - **冠詞の重複も必ず拾うこと**: "a a lesson" → phrase="a a", correction="a"、
   "the the" → phrase="the the", correction="the"
-- 例: "to to" / "is is" / "and and" なども同様
+- 例: "to to" / "is is" / "and and" / "would would" なども同様
+- **同じ語が3回以上続く場合は、連続している分をすべて phrase に含めること**
+  例: "would would would take" → phrase="would would would", correction="would"
+  （2語分だけを phrase にすると、1回直しても重複が残ってしまう）
+- 語を足す提案をするときは、その語が**直前に既に無いか**を必ず確認すること。
+  例: "if I would take" の "take" に "would take" を提案してはいけない
+  （適用すると "would would take" になる）。この場合は指摘不要
 - **correction は phrase から余分な語を取り除いただけの形にすること**
   （新しい語を持ち込まず、残す語は元のまま）
 

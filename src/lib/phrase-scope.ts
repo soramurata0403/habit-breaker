@@ -183,6 +183,49 @@ export function dropDuplicatedLeadingWords(
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * 置換範囲が「同じ語の連続」だった場合、その連続ブロック全体まで範囲を広げる。
+ *
+ *   "would would would take" の一部だけを対象にした指摘でも、
+ *   3つの would 全体を範囲にして1回の適用で "would take" にまとめる。
+ *
+ * 対象範囲が correction と同じ語の繰り返しで構成されている場合にのみ働くため、
+ * 無関係な語まで巻き込むことはない。
+ */
+export function expandDuplicateRun(
+  text: string,
+  start: number,
+  end: number,
+  correction: string,
+): { start: number; end: number } | null {
+  const word = correction.trim();
+  // correction が単語1語でなければ「重複の縮約」ではない。
+  if (!/^[A-Za-z]+(?:['’][A-Za-z]+)?$/.test(word)) return null;
+
+  const spanWords = text.slice(start, end).trim().split(/\s+/).filter(Boolean);
+  if (spanWords.length === 0) return null;
+  // 置換範囲がその語の繰り返しだけで出来ていることを確認する。
+  if (!spanWords.every((candidate) => candidate.toLowerCase() === word.toLowerCase())) {
+    return null;
+  }
+
+  const escaped = escapeRegExp(word);
+  const runPattern = new RegExp(`\\b${escaped}(?:\\s+${escaped})+\\b`, "gi");
+
+  let match: RegExpExecArray | null;
+  while ((match = runPattern.exec(text)) !== null) {
+    const runStart = match.index;
+    const runEnd = runStart + match[0].length;
+    // 対象範囲を含む連続ブロックが見つかったら、そこまで広げる。
+    if (runStart <= start && end <= runEnd) return { start: runStart, end: runEnd };
+  }
+  return null;
+}
+
 /** 対象と修正案が同一で、適用しても何も変わらない無意味な提案か。 */
 export function isNoOpCorrection(phrase: string, correction: string): boolean {
   return phrase.trim() === correction.trim();

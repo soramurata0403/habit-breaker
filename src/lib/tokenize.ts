@@ -8,6 +8,7 @@ import {
 import { isUnknownWord } from "@/lib/spellcheck";
 import {
   dropDuplicatedLeadingWords,
+  expandDuplicateRun,
   isNoOpCorrection,
   isSafeReplacementScope,
   wouldDuplicateDeterminer,
@@ -312,15 +313,26 @@ export function applyAiTypoFlags(
     const phraseCoversOneWord = match.phrase.trim().toLowerCase() === token.text.toLowerCase();
     if (isScopeSafe && !range && !phraseCoversOneWord) return token;
 
-    const replaceStart = range?.start ?? token.start;
-    const replaceEnd = range?.end ?? token.end;
+    // 同じ語が連続している箇所（"would would would"）は、その連続ブロック
+    // 全体を範囲にして1回の適用でまとめて1語に収縮させる。
+    const runRange = expandDuplicateRun(
+      text,
+      range?.start ?? token.start,
+      range?.end ?? token.end,
+      match.correction,
+    );
 
-    // 句の範囲を使えず単語1語に狭めた場合、修正案の先頭に直前と同じ語が
-    // 残っていると重複してしまう（"I didn't " に "didn't decide" を当てると
-    // "I didn't didn't decide" になる）。その分を取り除く。
-    const correction = range
-      ? match.correction
-      : dropDuplicatedLeadingWords(text.slice(0, replaceStart), match.correction);
+    const replaceStart = runRange?.start ?? range?.start ?? token.start;
+    const replaceEnd = runRange?.end ?? range?.end ?? token.end;
+
+    // 修正案の先頭に、置換範囲の直前に既にある語が含まれていると重複する。
+    //   "...if I would " に "would take" を当てると "would would take"
+    //   "I didn't " に "didn't decide" を当てると "didn't didn't decide"
+    // 置換範囲がどう決まったかに関わらず、常にこの重複を取り除く。
+    const correction = dropDuplicatedLeadingWords(
+      text.slice(0, replaceStart),
+      match.correction,
+    );
 
     // 適用しても内容が変わらない提案は出さない。
     if (isNoOpCorrection(text.slice(replaceStart, replaceEnd), correction)) {
