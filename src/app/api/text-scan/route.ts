@@ -59,7 +59,34 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
 - 意味のない省略記号（"..."）→ correction は "." にすること
 - word と phrase にはその記号そのもの（例: "!!"）を入れること
 
-### C. 口語的・初級的な表現（severity: "style"）
+### C. 文構造の破壊・不完全文（severity: "error"）
+ピリオドの打ち間違いによる文の分断は、必ず指摘すること。
+- **ピリオドの直後に小文字の等位接続詞（and / but / so / or / because など）**が
+  続いている場合、その接続詞以降が主語や動詞を欠いた断片（Sentence Fragment）に
+  なっている。必ず指摘すること。
+  例: "I consumed tacos. and went to school"
+  → phrase=". and", correction=", and"（コンマ接続に直す）
+  もしくは phrase="and", correction="And I"（ピリオドを保ったまま主語を補う）
+  のどちらか、文脈上自然な方を選ぶこと
+- 接続詞以外でも、ピリオドの後に主語・動詞が揃っていない断片が続く場合は指摘すること
+
+### D. 大文字・小文字の不整合（severity: "error"）
+文頭（文章の先頭、またはピリオド・感嘆符・疑問符の直後）が小文字で始まっている
+場合はエラーとして指摘すること。
+- phrase にはその小文字の語、correction には先頭を大文字にした形を入れること
+  例: phrase="and", correction="And"
+- ただし "a.m." / "p.m." / "e.g." / "i.e." / 小数点・略語のピリオドは
+  文末ではないので、その後が小文字でも指摘しないこと
+
+### E. 語の重複・二重入力（severity: "error"）
+前置詞・冠詞・助動詞などの機能語が重複している場合は必ず指摘すること。
+- 例: "at around at 9" → phrase="at around at", correction="at around"
+- 例: "in in the morning" → phrase="in in", correction="in"
+- 例: "the the" / "to to" / "is is" なども同様
+- **correction は phrase から余分な語を取り除いただけの形にすること**
+  （新しい語を持ち込まず、残す語は元のまま）
+
+### F. 口語的・初級的な表現（severity: "style"）
 文法は正しくても、日常会話的すぎてアカデミックな答案にふさわしくない語句を指摘すること。
 - 例: "at around" → "at approximately"
 - 例: "ate" → "consumed"
@@ -129,6 +156,12 @@ must / not / to など）だけ。**
   同程度にすること（"at around" → "at approximately" のように1対1で置き換わる形）。
   周囲の内容語を巻き込んで短い語に潰すような指定は絶対にしないこと。
 - severity "error" で記号を指摘する場合: word と phrase はその記号だけにすること。
+- 語の重複を消す場合（E）や、ピリオドをコンマに変える場合（C）は、
+  phrase に必要な範囲（最大6語）を取ってよい。ただし **correction は phrase から
+  語を取り除いた形か、語はそのままで記号だけを変えた形**にすること。
+  phrase の語を別の語に置き換えて短く潰すのは禁止。
+- word には phrase に含まれる語のうち、指摘の中心となる1語を入れること
+  （記号だけを直す場合を除き、word は必ずアルファベットの語にすること）。
 
 ## その他の条件
 - 存在しない単語（単純なスペルミス）は対象外にすること（別のロジックで検出済みのため）

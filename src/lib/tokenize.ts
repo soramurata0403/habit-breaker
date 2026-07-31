@@ -286,14 +286,25 @@ export function applyAiTypoFlags(
     // 置換範囲が広すぎる句（対象語と無関係な動詞・目的語を含むもの）は、
     // 適用時にそれらを巻き込んで削除してしまうため、サーバー側で弾いている。
     // ここでも同じ判定を行い、万一届いた場合でも単語1語の範囲に留める。
-    const range = isSafeReplacementScope({
+    const isScopeSafe = isSafeReplacementScope({
       word: token.text,
       phrase: match.phrase,
       correction: match.correction,
       severity: match.severity,
-    })
+    });
+    const range = isScopeSafe
       ? findPhraseRange(text, match.phrase, token.start, token.end)
       : null;
+
+    // "at around at" や ". and" のように複数語にまたがる指摘では、その句の
+    // 出現に含まれるトークンだけを対象にする。and / at / in のような頻出語は
+    // 文中に何度も現れるため、これが無いと無関係な同じ単語まで指摘され、
+    // 適用すると別の場所が書き換わってしまう。
+    //
+    // 範囲が広すぎて弾かれた指摘（isScopeSafe が false）はここでは落とさず、
+    // 単語1語の範囲に狭めたうえで指摘として残す。
+    const phraseCoversOneWord = match.phrase.trim().toLowerCase() === token.text.toLowerCase();
+    if (isScopeSafe && !range && !phraseCoversOneWord) return token;
 
     return {
       ...token,

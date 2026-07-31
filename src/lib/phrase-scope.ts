@@ -87,6 +87,32 @@ export function isSafePhraseScope(word: string, phrase: string): boolean {
 
 export type IssueSeverity = "error" | "style";
 
+/** 語の重複除去などで許容する最大語数。 */
+const MAX_SUBSEQUENCE_PHRASE_WORDS = 6;
+
+/**
+ * correction の語が phrase の語の「部分列」になっているか
+ * （＝語を取り除いただけで、新しい内容語を持ち込んでいないか）。
+ *
+ *   "at around at" → "at around"  : true（重複した at を消しただけ）
+ *   "in in"        → "in"         : true
+ *   "tacos. and"   → "tacos, and" : true（語は同じで記号だけが変わる）
+ *   "affect everyone wrong" → "incorrectly" : false（新しい語に潰している）
+ *
+ * 部分列であれば、残る語はすべて元の文にあった語なので、
+ * 周囲の内容語を巻き込んで消してしまう心配がない。
+ */
+function isWordSubsequence(phraseWords: string[], correctionWords: string[]): boolean {
+  if (correctionWords.length > phraseWords.length) return false;
+  let cursor = 0;
+  for (const word of correctionWords) {
+    const found = phraseWords.indexOf(word, cursor);
+    if (found === -1) return false;
+    cursor = found + 1;
+  }
+  return true;
+}
+
 /** 文字（アルファベット）を含まない＝記号だけの指摘かどうか。 */
 export function isSymbolOnly(value: string): boolean {
   const trimmed = value.trim();
@@ -119,9 +145,20 @@ export function isSafeReplacementScope(issue: {
     );
   }
 
+  // 語を取り除くだけの修正（重複した前置詞の削除、記号の差し替えなど）は、
+  // 新しい語を持ち込まないため範囲が多少広くても安全。
+  const phraseWords = toWords(phrase);
+  const correctionWords = toWords(issue.correction);
+  if (
+    phraseWords.length > 0 &&
+    phraseWords.length <= MAX_SUBSEQUENCE_PHRASE_WORDS &&
+    phraseWords.includes(word.toLowerCase()) &&
+    isWordSubsequence(phraseWords, correctionWords)
+  ) {
+    return true;
+  }
+
   if (issue.severity === "style") {
-    const phraseWords = toWords(phrase);
-    const correctionWords = toWords(issue.correction);
     if (phraseWords.length === 0 || phraseWords.length > MAX_STYLE_PHRASE_WORDS) return false;
     if (correctionWords.length === 0) return false;
     if (!phraseWords.includes(word.toLowerCase())) return false;
