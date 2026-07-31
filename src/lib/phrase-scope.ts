@@ -145,15 +145,34 @@ export function isSafeReplacementScope(issue: {
     );
   }
 
-  // 語を取り除くだけの修正（重複した前置詞の削除、記号の差し替えなど）は、
-  // 新しい語を持ち込まないため範囲が多少広くても安全。
   const phraseWords = toWords(phrase);
   const correctionWords = toWords(issue.correction);
+  const targetWord = word.toLowerCase();
+  const containsTarget = phraseWords.includes(targetWord);
+
+  // 語を取り除くだけの修正（重複した前置詞の削除、記号の差し替えなど）と、
+  // 語を挿入するだけの修正（冠詞の補い "took lesson" → "took a lesson" など）は、
+  // 元の語がすべて残るため範囲が多少広くても安全。
   if (
     phraseWords.length > 0 &&
     phraseWords.length <= MAX_SUBSEQUENCE_PHRASE_WORDS &&
-    phraseWords.includes(word.toLowerCase()) &&
-    isWordSubsequence(phraseWords, correctionWords)
+    containsTarget &&
+    (isWordSubsequence(phraseWords, correctionWords) ||
+      isWordSubsequence(correctionWords, phraseWords))
+  ) {
+    return true;
+  }
+
+  // コロケーションの入れ替え（"take Baptism" → "get baptized" など）。
+  // 対象語が句の**先頭**にある場合に限り、同程度の長さへの置き換えを許可する。
+  // 先頭に限定しているのは、"everyone wrong" → "incorrectly" のように
+  // 対象語の手前にある内容語を巻き込んで潰す指定を防ぐため。
+  if (
+    phraseWords.length > 1 &&
+    phraseWords.length <= MAX_STYLE_PHRASE_WORDS &&
+    phraseWords[0] === targetWord &&
+    correctionWords.length > 0 &&
+    Math.abs(phraseWords.length - correctionWords.length) <= 1
   ) {
     return true;
   }

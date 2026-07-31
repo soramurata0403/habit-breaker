@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import {
   applyAiTypoFlags,
   applyPronounContextFlags,
+  fitClauseForm,
   getExtendedContext,
   preserveSubject,
   tokenize,
@@ -368,9 +369,11 @@ export function TextEditor() {
     if (isExhausted) return;
     consumeRequest();
 
-    // "I believe" のような主語＋動詞の句を動詞だけの候補で置き換えると
-    // 主語が消えてしまうため、必要なら主語を補ってから適用する。
-    const safeReplacement = preserveSubject(text.slice(start, end), replacement);
+    // 置換候補をそのまま入れると節が壊れるケースを2段階で補正する。
+    //  1. "if I " + "be baptized" → "get baptized"（原形 be の後始末）
+    //  2. "I believe" を動詞だけの候補で置き換える際に主語を補う
+    const clauseFitted = fitClauseForm(text.slice(0, start), replacement);
+    const safeReplacement = preserveSubject(text.slice(start, end), clauseFitted);
 
     const next = text.slice(0, start) + safeReplacement + text.slice(end);
     const caret = start + safeReplacement.length;

@@ -474,6 +474,35 @@ export function preserveSubject(original: string, replacement: string): string {
   return `${subject} ${lowerFirst(trimmed)}`;
 }
 
+// 置換候補が原形の "be ..." で始まるとき、直前が助動詞や to なら正しい形
+// （will be baptized / to be baptized）だが、主語が直接来ている場合は
+// "if I be baptized" のような文法違反になる。その場合だけ形を整える。
+const LEADING_BARE_BE = /^be\b/i;
+const ENDS_WITH_MODAL = /\b(will|would|shall|should|can|could|may|might|must|to|not)\s+$/i;
+const ENDS_WITH_SUBJECT = /\b(i|we|you|they|he|she|it)\s+$/i;
+
+/**
+ * 置換後の節が成立するよう、原形 "be" を主語に合う形へ調整する。
+ *
+ *   "...if I "      + "be baptized" → "get baptized"（if I get baptized）
+ *   "...if he "     + "be baptized" → "gets baptized"
+ *   "...I will "    + "be baptized" → そのまま（will be baptized は正しい）
+ *   "...I want to " + "be baptized" → そのまま（to be baptized は正しい）
+ */
+export function fitClauseForm(precedingText: string, replacement: string): string {
+  const trimmed = replacement.trim();
+  if (!LEADING_BARE_BE.test(trimmed)) return replacement;
+  // 助動詞・to の後ろでは原形が正しいので触らない。
+  if (ENDS_WITH_MODAL.test(precedingText)) return replacement;
+
+  const subject = precedingText.match(ENDS_WITH_SUBJECT);
+  if (!subject) return replacement;
+
+  const pronoun = subject[1].toLowerCase();
+  const isThirdPersonSingular = pronoun === "he" || pronoun === "she" || pronoun === "it";
+  return trimmed.replace(LEADING_BARE_BE, isThirdPersonSingular ? "gets" : "get");
+}
+
 export function matchCase(source: string, target: string): string {
   if (!source) return target;
 

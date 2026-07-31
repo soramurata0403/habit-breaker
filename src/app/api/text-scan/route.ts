@@ -86,7 +86,35 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
 - **correction は phrase から余分な語を取り除いただけの形にすること**
   （新しい語を持ち込まず、残す語は元のまま）
 
-### F. 口語的・初級的な表現（severity: "style"）
+### F. 不自然なコロケーション（severity: "error"）
+動詞と名詞の組み合わせが英語として成立していない場合は、**style ではなく error**
+として指摘すること（言い換えの好みではなく誤りだから）。
+- 例: "take Baptism" は英語として不自然 → "get baptized" / "be baptized"
+- phrase には動詞から始まるコロケーション全体（最大3語）、word にはその**先頭の動詞**
+  を入れること。例: word="take", phrase="take Baptism", correction="get baptized"
+- **correction は、その句が置かれている節にそのまま入れて成立する形にすること。**
+  前後を読み、主語・接続詞・助動詞に合う活用を選ぶこと:
+  - "if I take Baptism" → "if I ___" に入る形なので "get baptized"
+    （"be baptized" は "if I be baptized" となり誤り）
+  - "I will take Baptism" → 助動詞の後なので "be baptized" でよい
+  - "I want to take Baptism" → to の後なので "be baptized" でよい
+
+### G. 可算名詞の冠詞抜け（severity: "error"）
+単数の可算名詞が冠詞なしで動詞の目的語になっている場合は指摘すること。
+- 例: "I took lesson" → "a lesson"（または "lessons"）
+- **phrase はその名詞1語だけ**にし、correction に冠詞を付けた形を入れること
+  例: word="lesson", phrase="lesson", correction="a lesson"
+- 固有名詞・不可算名詞（information, advice, water など）は対象外
+
+### H. "how to" の直後の品詞（severity: "error"）
+"how to" の直後は動詞の原形でなければならない。名詞が来ている場合は指摘すること。
+- 例: "how to baptism" → "how to be baptized"
+- **phrase はその名詞1語だけ**にし、correction に動詞句を入れること
+  例: word="baptism", phrase="baptism", correction="be baptized"
+- 名詞のまま残したい場合は "about baptism" / "regarding baptism" のように
+  前置詞句へ直す案でもよい（その場合も phrase は最小限にすること）
+
+### I. 口語的・初級的な表現（severity: "style"）
 文法は正しくても、日常会話的すぎてアカデミックな答案にふさわしくない語句を指摘すること。
 - 例: "at around" → "at approximately"
 - 例: "ate" → "consumed"
@@ -162,6 +190,17 @@ must / not / to など）だけ。**
   phrase の語を別の語に置き換えて短く潰すのは禁止。
 - word には phrase に含まれる語のうち、指摘の中心となる1語を入れること
   （記号だけを直す場合を除き、word は必ずアルファベットの語にすること）。
+- コロケーションの入れ替え（F）で phrase を2語以上にする場合、
+  **word は必ず phrase の先頭の語**にすること。
+  （先頭以外を word にすると、その手前の語まで置換範囲に入り消えてしまう）
+- 冠詞の補い（G）や "how to"（H）のように語を差し替える場合は、
+  phrase を**その1語だけ**に絞り、前後の語を含めないこと。
+
+## 置換後の文を必ず読み返すこと
+correction を phrase の位置に入れた文を組み立て直し、文法として成立するか確認すること。
+- 主語の直後に原形の be を置かないこと（"if I be baptized" は誤り）
+- 助動詞・to がある場合のみ原形を使うこと
+- 成立しない場合は、その節に合う活用へ直してから出力すること
 
 ## その他の条件
 - 存在しない単語（単純なスペルミス）は対象外にすること（別のロジックで検出済みのため）
