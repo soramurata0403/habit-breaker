@@ -251,6 +251,7 @@ export function TextEditor() {
                 phrase: issue.phrase,
                 correction: issue.correction,
                 explanation: issue.explanation,
+                severity: issue.severity,
               });
               changed = true;
             }
@@ -305,7 +306,7 @@ export function TextEditor() {
         if (prev.has(key)) return prev;
         const next = new Map(prev);
         // クリック経由で判明した誤りは単語1語単位（句情報は持たない）。
-        next.set(key, { phrase: word, correction, explanation });
+        next.set(key, { phrase: word, correction, explanation, severity: "error" });
         return next;
       });
     },
@@ -569,6 +570,18 @@ export function TextEditor() {
       const token = tokens[i];
       if (token.type === "word") {
         const next = tokens[i + 1];
+        // 直後に空白なく続く記号トークン（例: "now" と "!!"）は、
+        // 記号だけが行頭に落ちないよう1つのまとまりとして描画する。
+        if (next && next.type === "word" && next.isSymbol && next.start === token.end) {
+          nodes.push(
+            <span key={token.key} className="whitespace-nowrap">
+              {renderWordToken(token)}
+              {renderWordToken(next)}
+            </span>,
+          );
+          i++;
+          continue;
+        }
         if (next && next.type === "text" && next.attachedToPrevious) {
           nodes.push(
             <span key={token.key} className="whitespace-nowrap">
@@ -602,7 +615,7 @@ export function TextEditor() {
             </span>
             <span className="flex items-center gap-1.5">
               <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-              赤色：スペルミスの疑い
+              赤色：文法・スペル・記号のミス
             </span>
             <span className="flex items-center gap-1.5">
               <Lightbulb className="h-4 w-4 text-amber-500" />
@@ -768,7 +781,7 @@ export function TextEditor() {
               )}
             >
               <span className="text-base font-bold">{typoCount}</span>
-              件のスペルミスの疑い
+              件の要修正
             </button>
           </span>
         </div>

@@ -65,7 +65,7 @@ export function IssuePanel({
                 : "text-neutral-500 hover:text-neutral-700",
             )}
           >
-            スペルミス（{spellingItems.length}）
+            要修正（{spellingItems.length}）
           </button>
         </div>
       </div>
@@ -75,7 +75,7 @@ export function IssuePanel({
           <p className="px-2 py-8 text-center text-sm text-neutral-400">
             {activeTab === "improvements"
               ? "改善ポイントは見つかりませんでした。"
-              : "スペルミスの疑いは見つかりませんでした。"}
+              : "文法・スペル・記号のミスは見つかりませんでした。"}
           </p>
         ) : (
           <ul className="space-y-2">

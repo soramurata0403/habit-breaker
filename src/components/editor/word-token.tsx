@@ -41,7 +41,8 @@ export function WordToken({
   onConfirmAiTypo,
   onConfirmVaguePronoun,
 }: WordTokenProps) {
-  const isHighlighted = Boolean(token.rule);
+  // 口語表現の言い換え提案（style）はコーパスルールと同じ黄色扱いにする。
+  const isHighlighted = Boolean(token.rule) || Boolean(token.isAiStyle);
   const isTypoFlagged = Boolean(token.isUnknownWord) || Boolean(token.isAiTypo);
 
   // ハイライト対象（黄色・赤色）の単語と、ユーザーが「言い換えを探す」を
@@ -130,7 +131,17 @@ export function WordToken({
           onInteractOutside={handleInteractOutside}
           className="animate-popover z-50 w-[21rem] rounded-2xl border border-neutral-200 bg-white p-4 text-left shadow-xl focus:outline-none"
         >
-          {token.rule ? (
+          {token.isAiStyle && token.aiCorrection ? (
+            // 口語的な表現の言い換え提案（黄色）。理由と候補を1つ提示する。
+            <CorrectionCard
+              tone="style"
+              word={token.text}
+              correction={token.aiCorrection}
+              explanation={token.aiExplanation ?? ""}
+              isUsageExhausted={isUsageExhausted}
+              onApply={handleApplyCorrection}
+            />
+          ) : token.rule ? (
             <InsightCard
               badgeLabel="オーバーユース単語"
               badgeClassName="bg-amber-100 text-amber-800"
@@ -196,19 +207,28 @@ function CorrectionCard({
   explanation,
   isUsageExhausted,
   onApply,
+  tone = "error",
 }: {
   word: string;
   correction?: string;
   explanation: string;
   isUsageExhausted: boolean;
   onApply: (correction: string) => void;
+  /** error = ミスの疑い（赤）／ style = アカデミックな表現への言い換え（黄） */
+  tone?: "error" | "style";
 }) {
+  const isStyle = tone === "style";
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-800">
-          <TriangleAlert className="h-3 w-3" />
-          ミスの疑い
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
+            isStyle ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800",
+          )}
+        >
+          {isStyle ? <Sparkles className="h-3 w-3" /> : <TriangleAlert className="h-3 w-3" />}
+          {isStyle ? "アカデミックな表現へ" : "ミスの疑い"}
         </span>
         <span className="font-mono text-sm font-semibold text-neutral-900">{word}</span>
       </div>
@@ -224,14 +244,29 @@ function CorrectionCard({
           <button
             type="button"
             onClick={() => onApply(correction)}
-            className="flex w-full items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-left transition-colors hover:border-red-400 hover:bg-red-100"
+            className={cn(
+              "flex w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-colors",
+              isStyle
+                ? "border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100"
+                : "border-red-300 bg-red-50 hover:border-red-400 hover:bg-red-100",
+            )}
           >
-            <span className="flex items-center gap-1.5 text-sm font-medium text-red-800">
+            <span
+              className={cn(
+                "flex items-center gap-1.5 text-sm font-medium",
+                isStyle ? "text-amber-900" : "text-red-800",
+              )}
+            >
               <ArrowRight className="h-4 w-4 shrink-0" />
               {correction}
             </span>
-            <span className="shrink-0 rounded-md bg-red-600 px-2 py-1 text-xs font-semibold text-white">
-              修正する
+            <span
+              className={cn(
+                "shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-white",
+                isStyle ? "bg-amber-600" : "bg-red-600",
+              )}
+            >
+              {isStyle ? "置き換える" : "修正する"}
             </span>
           </button>
         )

@@ -1,5 +1,5 @@
 import { MAX_TEXT_LENGTH as MAX_ANALYZE_LENGTH } from "@/lib/config";
-import { isSafePhraseScope } from "@/lib/phrase-scope";
+import { isSafeReplacementScope } from "@/lib/phrase-scope";
 import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
 
 export const runtime = "nodejs";
@@ -14,26 +14,60 @@ type IssueEntry = {
   phrase: string;
   correction: string;
   explanation: string;
+  /** error = 文法・表記の誤り（赤）／ style = 口語的でアカデミックでない表現（黄） */
+  severity: "error" | "style";
 };
 type SuccessPayload = { issues: IssueEntry[] };
 
-const SYSTEM_PROMPT = `あなたは英文エッセイの校正者です。
-与えられた英文全体を読み、「スペル自体は正しい実在の英単語だが、文脈上は
-明らかに誤り（別の語の誤字、または文法上の誤り）である」箇所だけを特定してください。
+const SYSTEM_PROMPT = `あなたはTOEFL / IELTS向けの英文エッセイを添削する校正者です。
+与えられた英文全体を読み、次の2種類の指摘を洗い出してください。
 
-例: "I've leaned this in BYU" の "leaned" は "learned" の誤字。
+- severity "error"（赤）: 文法・時制・表記の明らかな誤り
+- severity "style"（黄）: 文法的には正しいが、アカデミックライティングとしては
+  口語的・初級的すぎる表現
+
+日常会話のようなカジュアルな文章が入力されることも多いので、
+「間違いではないが試験の答案としては不適切」な表現も必ず拾ってください。
 
 必ず以下のJSON形式のみで出力してください（前後に説明文や余計なテキストを含めないこと）:
 {
   "issues": [
     {
-      "word": "誤りの中心となる単語（原文に登場する綴りのまま）",
-      "phrase": "置き換える対象の原文の範囲。1語なら word と同じ文字列。動詞句なら句全体",
-      "correction": "phrase を置き換える正しい表現",
-      "explanation": "なぜ誤りなのかの簡潔な日本語説明（1〜2文）"
+      "word": "指摘の中心となる語（原文に登場する綴りのまま。記号の場合は記号そのもの）",
+      "phrase": "置き換える対象の原文の範囲。1語なら word と同じ文字列",
+      "correction": "phrase を置き換える表現",
+      "explanation": "なぜ問題なのかの簡潔な日本語説明（1〜2文）",
+      "severity": "error" または "style"
     }
   ]
 }
+
+## 必ず検出する対象
+
+### A. 時制の不一致（severity: "error"）
+同じ文・同じ文脈が過去の出来事を述べているのに、一部だけ現在形が混ざっている場合は
+必ず指摘すること。過去形で揃える修正案を出すこと。
+- 例: "I woke up at seven and go to school." の "go" は過去形の文脈に混ざった現在形。
+  word="go", phrase="go", correction="went", severity="error"
+- 周囲の動詞（woke, ate, was, went など）が過去形かどうかを手がかりに判断すること
+- 逆に、一般論・習慣を述べる現在形が正しく使われている箇所は指摘しないこと
+
+### B. アカデミックでない記号（severity: "error"）
+TOEFL / IELTS の答案では使えない記号は書式違反として指摘すること。
+- 感嘆符（"!" や "!!"）→ correction は "." にすること
+- 絵文字（😀 など）→ correction は "." にするか、直前の句読点に合わせること
+- 意味のない省略記号（"..."）→ correction は "." にすること
+- word と phrase にはその記号そのもの（例: "!!"）を入れること
+
+### C. 口語的・初級的な表現（severity: "style"）
+文法は正しくても、日常会話的すぎてアカデミックな答案にふさわしくない語句を指摘すること。
+- 例: "at around" → "at approximately"
+- 例: "ate" → "consumed"
+- 例: "got" → "obtained" / "received"、"a lot of" → "numerous"、
+  "kids" → "children"、"stuff" → "materials"、"really" → "considerably"
+- word には中心となる語、phrase には置き換える範囲（"at around" のような2語の
+  かたまりならその範囲）を入れること
+- 意味が変わってしまう言い換えは提案しないこと
 
 ## 修正案を作る際に必ず守る3原則
 
@@ -87,12 +121,20 @@ must / not / to など）だけ。**
 - 同様に、動詞ごとに共起しやすい副詞（significantly, severely, directly など）
   の中から、文意に最も合うものを選ぶこと
 
+## severity ごとの phrase の作り方（重要）
+- severity "error" の場合: 上記のとおり **対象語1語**が原則。
+  be動詞・助動詞と一体で直す場合のみ句に広げる。
+- severity "style" の場合: "at around" のような**決まった言い回しのかたまり**なら
+  そのまとまりを phrase にしてよい（最大3語）。ただし correction の語数も
+  同程度にすること（"at around" → "at approximately" のように1対1で置き換わる形）。
+  周囲の内容語を巻き込んで短い語に潰すような指定は絶対にしないこと。
+- severity "error" で記号を指摘する場合: word と phrase はその記号だけにすること。
+
 ## その他の条件
-- 単なる文体の癖・口語的な表現・語彙選択の稚拙さは対象外にすること
-  （それらは別の機能で扱うため、ここでは「明らかな誤り」のみを対象にすること）
 - 存在しない単語（単純なスペルミス）は対象外にすること（別のロジックで検出済みのため）
 - 確信が持てない場合は含めないこと（誤検知を避けるため保守的に判断すること）
-- 誤りが1つも見つからない場合は "issues": [] とすること`;
+- 同じ箇所を error と style の両方で重複して指摘しないこと
+- 指摘が1つも無い場合は "issues": [] とすること`;
 
 function isSuccessPayload(value: unknown): value is SuccessPayload {
   if (!value || typeof value !== "object") return false;
@@ -110,8 +152,15 @@ function isSuccessPayload(value: unknown): value is SuccessPayload {
       t.correction.trim().length > 0 &&
       typeof t.explanation === "string" &&
       t.explanation.trim().length > 0
+      // severity は欠けていても弾かず、後段で "error" に寄せる
+      // （必須にするとフィールド1つの欠落で指摘ごと失われてしまうため）。
     );
   });
+}
+
+/** severity が欠けている・不正な場合は誤り（赤）として扱う。 */
+function normalizeSeverity(value: unknown): "error" | "style" {
+  return value === "style" ? "style" : "error";
 }
 
 export async function POST(request: Request) {
@@ -122,7 +171,10 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: "リクエストボディが不正です。" }, { status: 400 });
+    return Response.json(
+      { error: "リクエストボディが不正です。" },
+      { status: 400 },
+    );
   }
 
   const { text } = (body ?? {}) as { text?: unknown };
@@ -173,22 +225,38 @@ export async function POST(request: Request) {
 
     if (!openaiResponse.ok) {
       const errorText = await openaiResponse.text().catch(() => "");
-      console.error("OpenAI API error (text-scan):", openaiResponse.status, errorText);
-      return Response.json({ error: "文脈チェックに失敗しました。" }, { status: 502 });
+      console.error(
+        "OpenAI API error (text-scan):",
+        openaiResponse.status,
+        errorText,
+      );
+      return Response.json(
+        { error: "文脈チェックに失敗しました。" },
+        { status: 502 },
+      );
     }
 
     const data = await openaiResponse.json();
     const content = data?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
-      console.error("OpenAI API returned an unexpected shape (text-scan):", data);
-      return Response.json({ error: "AIの応答が不正な形式でした。" }, { status: 502 });
+      console.error(
+        "OpenAI API returned an unexpected shape (text-scan):",
+        data,
+      );
+      return Response.json(
+        { error: "AIの応答が不正な形式でした。" },
+        { status: 502 },
+      );
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(content);
     } catch {
-      console.error("Failed to parse OpenAI JSON content (text-scan):", content);
+      console.error(
+        "Failed to parse OpenAI JSON content (text-scan):",
+        content,
+      );
       return Response.json(
         { error: "AIの応答をJSONとして解釈できませんでした。" },
         { status: 502 },
@@ -196,7 +264,10 @@ export async function POST(request: Request) {
     }
 
     if (!isSuccessPayload(parsed)) {
-      console.error("OpenAI JSON content failed shape validation (text-scan):", parsed);
+      console.error(
+        "OpenAI JSON content failed shape validation (text-scan):",
+        parsed,
+      );
       return Response.json(
         { error: "AIの応答が期待した形式ではありませんでした。" },
         { status: 502 },
@@ -206,22 +277,36 @@ export async function POST(request: Request) {
     // "phrase" は置換範囲の特定に使うため、原文にそのまま現れるものだけを通す。
     // また "word" が "phrase" に含まれていないと、ハイライト位置と置換範囲が
     // 対応しなくなるため除外する。
-    const issues = parsed.issues.filter((issue) => {
-      const phrase = issue.phrase.trim();
-      const word = issue.word.trim();
+    const issues = parsed.issues
+      .map((issue) => ({
+        ...issue,
+        severity: normalizeSeverity(issue.severity),
+      }))
+      .filter((issue) => {
+        const phrase = issue.phrase.trim();
+        const word = issue.word.trim();
 
-      // 原文にそのまま現れない句は置換範囲を特定できないため除外する。
-      if (!text.includes(phrase)) return false;
-      if (issue.correction.trim() === phrase) return false;
+        // 原文にそのまま現れない句は置換範囲を特定できないため除外する。
+        if (!text.includes(phrase)) return false;
+        if (issue.correction.trim() === phrase) return false;
 
-      // 置換範囲が広すぎるものは除外する。対象語と無関係な語（他の動詞・
-      // 目的語など）を巻き込んだ句を許すと、適用時にそれらが消えてしまう。
-      //   例: word="wrong", phrase="affect everyone wrong"
-      //       → "affect everyone" まで削除されてしまうので受け付けない
-      if (!isSafePhraseScope(word, phrase)) return false;
+        // 置換範囲が広すぎるものは除外する。対象語と無関係な語（他の動詞・
+        // 目的語など）を巻き込んだ句を許すと、適用時にそれらが消えてしまう。
+        //   例: word="wrong", phrase="affect everyone wrong"
+        //       → "affect everyone" まで削除されてしまうので受け付けない
+        if (
+          !isSafeReplacementScope({
+            word,
+            phrase,
+            correction: issue.correction,
+            severity: issue.severity,
+          })
+        ) {
+          return false;
+        }
 
-      return true;
-    });
+        return true;
+      });
 
     return Response.json({ issues }, { status: 200 });
   } catch (error) {

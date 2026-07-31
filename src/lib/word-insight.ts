@@ -129,6 +129,8 @@ export type ContextualTypo = {
   /** phrase を置き換える正しい表現。 */
   correction: string;
   explanation: string;
+  /** error = 文法・表記の誤り（赤）／ style = 口語的な表現の言い換え（黄） */
+  severity: "error" | "style";
 };
 
 type ScanApiResponse = { issues?: unknown };
@@ -177,6 +179,8 @@ export async function scanTextForContextualTypos(text: string): Promise<ScanOutc
         phrase: item.phrase,
         correction: item.correction,
         explanation: item.explanation,
+        // severity が欠けていても指摘を捨てず、誤り（赤）として扱う。
+        severity: item.severity === "style" ? ("style" as const) : ("error" as const),
       }));
 
     return { didRequest: true, issues };

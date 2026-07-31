@@ -6,7 +6,7 @@ import {
   type HabitRule,
 } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
-import { isSafePhraseScope } from "@/lib/phrase-scope";
+import { isSafeReplacementScope, type IssueSeverity } from "@/lib/phrase-scope";
 
 export type AiTypoInfo = {
   /** 置換対象の原文の範囲。単語1語のことも "am believing" のような句のこともある。 */
@@ -14,6 +14,8 @@ export type AiTypoInfo = {
   /** phrase を置き換える正しい表現。 */
   correction: string;
   explanation: string;
+  /** error = 文法・表記の誤り（赤）／ style = 口語的な表現の言い換え（黄） */
+  severity: IssueSeverity;
 };
 
 export type Token =
@@ -35,7 +37,11 @@ export type Token =
       // rule が「同語の重複使用」判定によって付与された場合の、文章内での出現回数。
       occurrenceCount?: number;
       isUnknownWord?: boolean;
+      // 記号トークン（"!!" や絵文字など）。指摘が付いた場合のみ強調表示する。
+      isSymbol?: boolean;
       isAiTypo?: boolean;
+      // 口語表現の言い換え提案（黄色）。isAiTypo（赤）とは排他。
+      isAiStyle?: boolean;
       aiCorrection?: string;
       aiExplanation?: string;
       // 置換範囲。句レベルの修正（例: "am believing" → "believe"）では
@@ -46,7 +52,12 @@ export type Token =
 
 const SENTENCE_END_PATTERN = /[.!?]/;
 const WORD_PATTERN = /[A-Za-z]+(?:['’][A-Za-z]+)*/g;
-const ATTACHED_PUNCTUATION_PATTERN = /^[.,!?;:]+/;
+const ATTACHED_PUNCTUATION_PATTERN = /^[.,;:]+/;
+
+// アカデミックライティングでは使えない記号（感嘆符・連続する疑問符・
+// 省略記号・絵文字）。指摘対象になり得るよう、単語と同じくクリック可能な
+// トークンとして切り出す（指摘が付かなければ見た目は素のテキストのまま）。
+const NOTABLE_SYMBOL_PATTERN = /!+|\?{2,}|\.{3,}|\p{Extended_Pictographic}+/gu;
 
 // think/bad のような基本語は、文章内で2回以上使われて初めて
 // 「重複・多用」とみなしてハイライトする（1回だけの自然な使用はスルーする）。
@@ -130,31 +141,61 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
   // 直前の word トークンの直後に空白なしで続く句読点（. , ! ? ; :）は、
   // 折り返し時にその句読点だけが孤立して次行に落ちないよう、別トークンに
   // 分けつつ `attachedToPrevious` を立てて描画側で単語とまとめさせる。
-  function flushGap(upTo: number) {
-    if (upTo <= lastIndex) return;
-    const gap = text.slice(lastIndex, upTo);
+  // 語と語の間の文字列を、通常のテキストと「指摘対象になり得る記号」に分けて
+  // 積む。記号は word トークンとして切り出し、単語と同じ仕組みで
+  // ハイライト・クリックできるようにする。
+  function pushGapSegment(from: number, to: number) {
+    if (to <= from) return;
+    const segment = text.slice(from, to);
     const previousIsWord = tokens.length > 0 && tokens[tokens.length - 1].type === "word";
 
     if (previousIsWord) {
-      const attachedMatch = gap.match(ATTACHED_PUNCTUATION_PATTERN);
+      const attachedMatch = segment.match(ATTACHED_PUNCTUATION_PATTERN);
       if (attachedMatch) {
         const attached = attachedMatch[0];
-        const rest = gap.slice(attached.length);
+        const rest = segment.slice(attached.length);
         tokens.push({
           type: "text",
-          key: `t-${lastIndex}`,
+          key: `t-${from}`,
           text: attached,
           attachedToPrevious: true,
         });
         if (rest) {
-          tokens.push({ type: "text", key: `t-${lastIndex + attached.length}`, text: rest });
+          tokens.push({ type: "text", key: `t-${from + attached.length}`, text: rest });
         }
-        if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
         return;
       }
     }
 
-    tokens.push({ type: "text", key: `t-${lastIndex}`, text: gap });
+    tokens.push({ type: "text", key: `t-${from}`, text: segment });
+  }
+
+  function flushGap(upTo: number) {
+    if (upTo <= lastIndex) return;
+    const gap = text.slice(lastIndex, upTo);
+
+    NOTABLE_SYMBOL_PATTERN.lastIndex = 0;
+    let cursor = lastIndex;
+    let symbolMatch: RegExpExecArray | null;
+
+    while ((symbolMatch = NOTABLE_SYMBOL_PATTERN.exec(gap)) !== null) {
+      const symbolStart = lastIndex + symbolMatch.index;
+      const symbolEnd = symbolStart + symbolMatch[0].length;
+
+      pushGapSegment(cursor, symbolStart);
+      tokens.push({
+        type: "word",
+        key: `s-${symbolStart}`,
+        text: symbolMatch[0],
+        start: symbolStart,
+        end: symbolEnd,
+        isSymbol: true,
+        isUnknownWord: false,
+      });
+      cursor = symbolEnd;
+    }
+
+    pushGapSegment(cursor, upTo);
     if (SENTENCE_END_PATTERN.test(gap)) atSentenceStart = true;
   }
 
@@ -245,13 +286,19 @@ export function applyAiTypoFlags(
     // 置換範囲が広すぎる句（対象語と無関係な動詞・目的語を含むもの）は、
     // 適用時にそれらを巻き込んで削除してしまうため、サーバー側で弾いている。
     // ここでも同じ判定を行い、万一届いた場合でも単語1語の範囲に留める。
-    const range = isSafePhraseScope(token.text, match.phrase)
+    const range = isSafeReplacementScope({
+      word: token.text,
+      phrase: match.phrase,
+      correction: match.correction,
+      severity: match.severity,
+    })
       ? findPhraseRange(text, match.phrase, token.start, token.end)
       : null;
 
     return {
       ...token,
-      isAiTypo: true,
+      // error は赤（ミスの疑い）、style は黄（言い換え提案）として扱う。
+      ...(match.severity === "style" ? { isAiStyle: true } : { isAiTypo: true }),
       aiCorrection: match.correction,
       aiExplanation: match.explanation,
       aiReplaceStart: range?.start ?? token.start,

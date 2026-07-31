@@ -25,6 +25,19 @@ export function buildIssueItems(tokens: Token[]): {
   for (const token of tokens) {
     if (token.type !== "word") continue;
 
+    // 口語表現の言い換え提案（黄色）も改善ポイントとして一覧に載せる。
+    if (token.isAiStyle) {
+      improvements.push({
+        id: token.start,
+        tokenKey: token.key,
+        word: token.text,
+        detail: token.aiCorrection
+          ? `より硬い表現に: "${token.aiCorrection}"`
+          : (token.aiExplanation ?? "アカデミックな表現への言い換えを検討しましょう。"),
+      });
+      continue;
+    }
+
     if (token.rule) {
       improvements.push({
         id: token.start,
