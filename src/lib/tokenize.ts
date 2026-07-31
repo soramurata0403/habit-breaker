@@ -6,6 +6,7 @@ import {
   type HabitRule,
 } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
+import { isSafePhraseScope } from "@/lib/phrase-scope";
 
 export type AiTypoInfo = {
   /** 置換対象の原文の範囲。単語1語のことも "am believing" のような句のこともある。 */
@@ -240,7 +241,13 @@ export function applyAiTypoFlags(
 
     // 句レベルの修正では、その単語を含む句の範囲を原文から探して置換範囲にする。
     // 見つからない場合（本文が編集された等）は単語1語の範囲にフォールバックする。
-    const range = findPhraseRange(text, match.phrase, token.start, token.end);
+    //
+    // 置換範囲が広すぎる句（対象語と無関係な動詞・目的語を含むもの）は、
+    // 適用時にそれらを巻き込んで削除してしまうため、サーバー側で弾いている。
+    // ここでも同じ判定を行い、万一届いた場合でも単語1語の範囲に留める。
+    const range = isSafePhraseScope(token.text, match.phrase)
+      ? findPhraseRange(text, match.phrase, token.start, token.end)
+      : null;
 
     return {
       ...token,

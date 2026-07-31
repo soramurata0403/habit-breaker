@@ -1,4 +1,5 @@
 import { MAX_TEXT_LENGTH as MAX_ANALYZE_LENGTH } from "@/lib/config";
+import { isSafePhraseScope } from "@/lib/phrase-scope";
 import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
 
 export const runtime = "nodejs";
@@ -53,15 +54,38 @@ const SYSTEM_PROMPT = `あなたは英文エッセイの校正者です。
 - 置換後の文が不自然・意味不明になる場合は、その候補を捨てること
 
 ### 3. 修正スコープの最適化（句の境界認識）
-be動詞や助動詞と組み合わさった表現を直す場合、単語1語だけを置き換えると
-文法が壊れる。**動詞句全体を1つの修正単位**として "phrase" に入れること。
-- 例: "I am believing that..." は "believing" だけを "believe" にすると
+"phrase" は**必要最小限の範囲**にすること。原則は「対象語1語」で、
+be動詞・助動詞と一体で直さないと文法が壊れる場合に限って句に広げる。
+
+- 既定: phrase は word と同じ1語にすること
+- 例外: "I am believing that..." は "believing" だけを "believe" にすると
   "am believe" という新たな文法違反になる。
-  正しくは phrase: "am believing", correction: "believe" とすること
-- 同様に進行形・完了形・受動態・助動詞を含む誤りは、必ず句全体を phrase にすること
+  この場合のみ phrase: "am believing", correction: "believe" とすること
+
+**phrase に含めてよいのは、対象語そのものと、それに直接くっついた
+be動詞・助動詞・否定語（am / is / are / was / were / be / been / being /
+have / has / had / do / does / did / will / would / can / could / should /
+must / not / to など）だけ。**
+
+- 他の動詞・名詞・目的語を phrase に含めては絶対にいけない
+  誤り例: word="wrong", phrase="affect everyone wrong", correction="incorrectly"
+  → これは "affect everyone" まで置換範囲に入ってしまい、適用すると
+    "it will affect everyone wrong" が "it will incorrectly" になって
+    文が壊れる。正しくは phrase="wrong", correction="adversely" のように
+    **対象語だけ**を範囲にすること
 - "phrase" は必ず原文にそのまま現れる連続した文字列であること
   （前後の語を勝手に変えたり、原文にない語を含めないこと）
 - "word" は "phrase" に含まれる語のうち、誤りの中心となる1語にすること
+
+### 4. 副詞の選定は「文が伝えたい意味」に合わせる
+動詞を修飾する副詞を直す場合、動詞との相性と文意を必ず確認すること。
+- "affect"（影響を与える）を修飾する副詞は、多くの場合
+  **adversely / negatively（悪影響を与える）**が自然。
+  例: "it will affect everyone wrong" → "wrong" を "adversely" または
+  "negatively" にする（"incorrectly" は「やり方が不正確」という意味になり、
+  「悪影響が及ぶ」という文意に合わないので選ばないこと）
+- 同様に、動詞ごとに共起しやすい副詞（significantly, severely, directly など）
+  の中から、文意に最も合うものを選ぶこと
 
 ## その他の条件
 - 単なる文体の癖・口語的な表現・語彙選択の稚拙さは対象外にすること
@@ -184,11 +208,19 @@ export async function POST(request: Request) {
     // 対応しなくなるため除外する。
     const issues = parsed.issues.filter((issue) => {
       const phrase = issue.phrase.trim();
-      return (
-        text.includes(phrase) &&
-        phrase.toLowerCase().includes(issue.word.trim().toLowerCase()) &&
-        issue.correction.trim() !== phrase
-      );
+      const word = issue.word.trim();
+
+      // 原文にそのまま現れない句は置換範囲を特定できないため除外する。
+      if (!text.includes(phrase)) return false;
+      if (issue.correction.trim() === phrase) return false;
+
+      // 置換範囲が広すぎるものは除外する。対象語と無関係な語（他の動詞・
+      // 目的語など）を巻き込んだ句を許すと、適用時にそれらが消えてしまう。
+      //   例: word="wrong", phrase="affect everyone wrong"
+      //       → "affect everyone" まで削除されてしまうので受け付けない
+      if (!isSafePhraseScope(word, phrase)) return false;
+
+      return true;
     });
 
     return Response.json({ issues }, { status: 200 });
