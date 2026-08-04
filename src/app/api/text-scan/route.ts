@@ -5,9 +5,16 @@ import {
   isNoOpCorrection,
   isSafeReplacementScope,
 } from "@/lib/phrase-scope";
+import { findSenseViolation, POLYSEMOUS_WORDS } from "@/lib/polysemy";
 import { checkRateLimit, rateLimitResponse } from "@/lib/server-rate-limit";
 
 export const runtime = "nodejs";
+
+/** 句の中に品詞判定が必要な多義語（so / like / well / as）が含まれるか。 */
+function containsPolysemousWord(phrase: string): boolean {
+  const words = phrase.toLowerCase().match(/[a-z]+(?:['’][a-z]+)*/g);
+  return words ? words.some((word) => POLYSEMOUS_WORDS.has(word)) : false;
+}
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_MODEL = "gpt-4o-mini";
@@ -186,6 +193,26 @@ TOEFL / IELTS の答案では使えない記号は書式違反として指摘す
   （例: "I answered wrong" → "incorrectly" / "wrongly"。形容詞や反対語にはしない）
 - 名詞を修飾している位置なら形容詞、主語・目的語の位置なら名詞にすること
 - 元の語の時制・数・活用も、文法的に正しい範囲で揃えること
+
+### 1-2. 多義語は「その文での品詞」を先に確定させること（最重要）
+so / like / well / as / that / since のように品詞が複数ある語を指摘・置換するときは、
+**その文でどの品詞として使われているか**を先に確定し、**同じ品詞の語句にだけ**
+置き換えること。品詞をまたぐ置換は、意味が近くても文を壊すので禁止。
+- "so" が形容詞・副詞を強めている場合（"so ugly" = very ugly）は**強調の副詞**。
+  extremely / exceptionally / remarkably などに置き換えること。
+  **therefore / as a result / consequently / thus に置き換えては絶対にいけない**
+  （"is so ugly" → "is therefore ugly" は文が壊れる）
+- "so" が「節, so 節」の形で結果を導いている場合のみ、
+  therefore / as a result / consequently / thus が使える
+- "like" は動詞（"I like ..." → enjoy 系）と前置詞（"countries like Japan" →
+  such as 系）を取り違えないこと
+- "well" は副詞（"works well" → effectively）と形容詞（"I am well" → healthy）を
+  取り違えないこと
+- "as" は接続詞（"as it was raining" → because / since）と前置詞（"as a teacher" →
+  〜として）を取り違えないこと
+- "so that" / "as well as" / "as ... as" / "such as" は固定表現なので、
+  その一部だけを置き換える指摘は出さないこと
+- 品詞が判断できない場合は、その語を指摘しないこと
 
 ### 2. 文脈優先のセマンティック検証
 単語単体の辞書的意味や機械的な対義語を当てはめてはいけない。
@@ -480,6 +507,23 @@ export async function POST(request: Request) {
             }
           }
           if (!hasSafeOccurrence) return false;
+        }
+
+        // 多義語の品詞に合わない置換案は除外する。
+        //   例: "is so ugly"（強調の副詞）の "so" を "therefore" にする指摘
+        //       → 適用すると "is therefore ugly" になり文が壊れる
+        // 原文中のどの出現でも品詞が合わない場合にのみ落とす（1か所でも
+        // 成立する出現があれば、どのトークンに付けるかはクライアント側が
+        // 出現ごとに再判定する）。
+        if (containsPolysemousWord(phrase)) {
+          let hasValidOccurrence = false;
+          for (let at = text.indexOf(phrase); at !== -1; at = text.indexOf(phrase, at + 1)) {
+            if (!findSenseViolation(text, at, phrase, issue.correction)) {
+              hasValidOccurrence = true;
+              break;
+            }
+          }
+          if (!hasValidOccurrence) return false;
         }
 
         // 置換範囲が広すぎるものは除外する。対象語と無関係な語（他の動詞・

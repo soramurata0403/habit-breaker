@@ -1,8 +1,21 @@
 import { contextualPronouns, habitRuleMap, type Suggestion } from "@/data/habit-rules";
 import { isNoOpCorrection } from "@/lib/phrase-scope";
+import {
+  applySenseToRule,
+  filterSuggestionsForSense,
+  resolveWordSense,
+  type WordSense,
+} from "@/lib/polysemy";
 import { genericSynonymMap } from "@/data/generic-synonyms";
 
-export type WordInsightSource = "corpus" | "ai" | "generic" | "unknown" | "typo-local";
+export type WordInsightSource =
+  | "corpus"
+  | "ai"
+  | "generic"
+  | "unknown"
+  | "typo-local"
+  // 多義語の品詞を判定した結果、言い換えの対象にならないと分かった場合。
+  | "sense";
 
 export type WordInsight = {
   word: string;
@@ -53,12 +66,20 @@ async function fetchFromApi(
   word: string,
   contextSentence: string,
   documentText?: string,
+  sense?: WordSense | null,
 ): Promise<WordInsight | null> {
   try {
     const response = await fetch("/api/word-insight", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ word, contextSentence, documentText }),
+      // senseId を渡すと、サーバー側で「その品詞に一致する候補だけを出す」
+      // 制約をプロンプトに載せ、外れた候補を除外してくれる。
+      body: JSON.stringify({
+        word,
+        contextSentence,
+        documentText,
+        ...(sense ? { senseId: sense.id } : {}),
+      }),
     });
 
     if (!response.ok) return null;
@@ -68,14 +89,21 @@ async function fetchFromApi(
       return null;
     }
 
-    const suggestions = normalizeCandidates(data.candidates);
+    // 品詞が確定している多義語では、その品詞に合わない候補をここでも落とす。
+    // 全て落ちた場合は、その品詞に一致する既定の候補に差し替える。
+    let suggestions = normalizeCandidates(data.candidates);
+    if (sense) {
+      suggestions = filterSuggestionsForSense(sense, suggestions);
+      if (suggestions.length === 0) suggestions = sense.suggestions;
+    }
 
     // we/us/our が「具体的な人物を指す適切な用法」だとAIが確認した場合は、
     // 言い換え候補が0件でも正常な応答として扱う（言い換えの必要がないため）。
     const isContextualPronoun = contextualPronouns.has(word.toLowerCase());
     const isConfirmedFinePronoun = isContextualPronoun && data.isVaguePronoun === false;
 
-    if (suggestions.length === 0 && !isConfirmedFinePronoun) return null;
+    // 多義語で候補が全て弾かれた場合も、解説だけは表示する価値がある。
+    if (suggestions.length === 0 && !isConfirmedFinePronoun && !sense) return null;
 
     const isTypo =
       data.isTypo === true &&
@@ -83,7 +111,9 @@ async function fetchFromApi(
       data.suggestedSpelling.trim().length > 0;
 
     return {
-      word,
+      // 呼び出し側は小文字の見出し語で照合するため、ここでも小文字に揃える
+      // （"As" のように文頭で大文字になっている語でも解説を表示できるように）。
+      word: word.toLowerCase(),
       source: "ai",
       badgeLabel: "解説",
       insight: data.explanation,
@@ -250,39 +280,99 @@ export async function checkPronounContext(
  * その単語の解説を出すのに /api/word-insight（＝OpenAI呼び出し）が必要かどうか。
  * コーパスルールに載っている単語は通信せず即座に返せるため、
  * 利用回数のカウント対象から除外できる。
+ * 多義語のうち「言い換えの対象にならない用法」（"so that" / "as well as" など）も
+ * 文脈から機械的に判定できるので通信は不要。
  */
-export function requiresApiCall(rawWord: string): boolean {
-  return !habitRuleMap.has(rawWord.toLowerCase());
+export function requiresApiCall(
+  rawWord: string,
+  documentText?: string,
+  position?: number,
+): boolean {
+  if (habitRuleMap.has(rawWord.toLowerCase())) return false;
+  return !resolveSense(rawWord, documentText, position)?.suppress;
+}
+
+function resolveSense(
+  rawWord: string,
+  documentText?: string,
+  position?: number,
+): WordSense | null {
+  if (typeof documentText !== "string" || typeof position !== "number") return null;
+  return resolveWordSense(rawWord, documentText, position);
 }
 
 /**
  * 単語ごとの解説・言い換え候補を取得するフック。
  *
  * 優先順位:
+ *   0. 多義語（so / like / well / as）の品詞判定 — 出せる候補を品詞に合わせて絞る
  *   1. コーパスルール（静的シードデータ）— 通信不要で即座に返す
  *   2. /api/word-insight（gpt-4o-miniによる文脈に応じたリアルタイム生成）
  *   3. ローカル汎用辞書 → 「データ準備中」表示（APIキー未設定・通信エラー時の安全なフォールバック）
+ *
+ * `position` には文章中でのその語の開始位置を渡す。多義語の品詞判定
+ * （"so ugly" の so は副詞、"…, so we left" の so は接続詞）に使う。
  */
 export async function fetchWordInsight(
   rawWord: string,
   contextSentence?: string,
   documentText?: string,
+  position?: number,
 ): Promise<WordInsight> {
   const word = rawWord.toLowerCase();
+  const sense = resolveSense(rawWord, documentText, position);
 
   const corpusRule = habitRuleMap.get(word);
   if (corpusRule) {
+    const senseRule = applySenseToRule(corpusRule, sense);
+    if (!senseRule) {
+      // "so that" のように、その用法では言い換えの対象にならない場合。
+      return {
+        word: corpusRule.word,
+        source: "sense",
+        badgeLabel: "用法の確認",
+        insight: sense?.insight ?? corpusRule.insight,
+        suggestions: [],
+      };
+    }
     return {
-      word: corpusRule.word,
+      word: senseRule.word,
       source: "corpus",
       badgeLabel: "オーバーユース単語",
-      insight: corpusRule.insight,
-      suggestions: corpusRule.suggestions,
+      insight: senseRule.insight,
+      suggestions: senseRule.suggestions,
     };
   }
 
-  const aiInsight = await fetchFromApi(rawWord, contextSentence?.trim() || rawWord, documentText);
+  // 固定表現の一部（"as well as" など）は通信せずその旨だけを伝える。
+  if (sense?.suppress) {
+    return {
+      word,
+      source: "sense",
+      badgeLabel: "用法の確認",
+      insight: sense.insight,
+      suggestions: [],
+    };
+  }
+
+  const aiInsight = await fetchFromApi(
+    rawWord,
+    contextSentence?.trim() || rawWord,
+    documentText,
+    sense,
+  );
   if (aiInsight) return aiInsight;
+
+  // 多義語で候補が1つも残らなかった場合は、汎用辞書ではなく用法の解説を返す。
+  if (sense) {
+    return {
+      word,
+      source: "sense",
+      badgeLabel: "用法の確認",
+      insight: sense.insight,
+      suggestions: sense.suggestions,
+    };
+  }
 
   return localFallback(rawWord, word);
 }

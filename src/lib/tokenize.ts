@@ -6,6 +6,7 @@ import {
   type HabitRule,
 } from "@/data/habit-rules";
 import { isUnknownWord } from "@/lib/spellcheck";
+import { applySenseToRule, findSenseViolation, resolveWordSense } from "@/lib/polysemy";
 import {
   dropDuplicatedLeadingWords,
   expandDuplicateRun,
@@ -243,10 +244,18 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
     const lower = word.toLowerCase();
     const candidateRule = habitRuleMap.get(lower);
     const occurrenceCount = candidateRule ? wordCounts.get(lower) : undefined;
-    const rule =
+    const baseRule =
       candidateRule && (occurrenceCount ?? 0) >= MIN_OCCURRENCES_FOR_HIGHLIGHT
         ? candidateRule
         : undefined;
+
+    // 多義語（so / like / well / as）は、その位置で果たしている品詞・文法機能を
+    // 判定し、同じ品詞の候補だけを持つルールへ差し替える。
+    //   "is so ugly"（強調の副詞） → extremely / exceptionally ...
+    //   "…, so we left"（接続詞）  → therefore / as a result ...
+    // 品詞をまたいだ候補（"is therefore ugly"）を出さないための最初の関門。
+    const sense = baseRule ? resolveWordSense(lower, text, start) : null;
+    const rule = baseRule ? applySenseToRule(baseRule, sense) : undefined;
 
     tokens.push({
       type: "word",
@@ -255,7 +264,8 @@ export function tokenize(text: string, dictionary?: Set<string> | null): Token[]
       start,
       end,
       rule,
-      occurrenceCount: rule ? occurrenceCount : undefined,
+      // 用法別の解説を出したいので、多義語では出現回数のメッセージを使わない。
+      occurrenceCount: rule && !sense ? occurrenceCount : undefined,
       isUnknownWord:
         !rule && dictionary ? isUnknownWord(word, atSentenceStart, dictionary) : false,
     });
@@ -336,6 +346,20 @@ export function applyAiTypoFlags(
 
     // 適用しても内容が変わらない提案は出さない。
     if (isNoOpCorrection(text.slice(replaceStart, replaceEnd), correction)) {
+      return token;
+    }
+
+    // 多義語の品詞に合わない置換案は出さない。強調の副詞の so
+    // （"is so ugly"）を "therefore" に替えると "is therefore ugly" となり
+    // 文が壊れるため、サーバー側の判定をすり抜けた場合の最後の関門にする。
+    if (
+      findSenseViolation(
+        text,
+        replaceStart,
+        text.slice(replaceStart, replaceEnd),
+        correction,
+      )
+    ) {
       return token;
     }
 

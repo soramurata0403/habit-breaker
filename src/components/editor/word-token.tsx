@@ -300,8 +300,9 @@ function DynamicInsight({
 }) {
   const [insight, setInsight] = useState<WordInsight | null>(null);
 
-  // コーパスルールに載っている単語は通信不要で即座に返せる。
-  const needsApi = requiresApiCall(word);
+  // コーパスルールに載っている単語や、品詞が確定していて言い換えの
+  // 対象にならない多義語（"as well as" 等）は通信不要で即座に返せる。
+  const needsApi = requiresApiCall(word, fullText, start);
   // 閲覧自体は利用回数を消費しないため、上限到達でも解説は表示できる。
   // 文字数超過のときだけ通信を止める。
   const isBlocked = needsApi && isOverLength;
@@ -314,7 +315,9 @@ function DynamicInsight({
     const contextSentence = contextualPronouns.has(word.toLowerCase())
       ? getExtendedContext(fullText, start, 1)
       : getContextSentence(fullText, start);
-    fetchWordInsight(word, contextSentence, fullText).then((result) => {
+    // start を渡すと、多義語（so / like / well / as）の品詞をその位置の
+    // 文脈から判定し、品詞に一致する候補だけを出せるようになる。
+    fetchWordInsight(word, contextSentence, fullText, start).then((result) => {
       if (cancelled) return;
       setInsight(result);
 
@@ -372,7 +375,9 @@ function DynamicInsight({
           ? "bg-indigo-100 text-indigo-800"
           : resolved.source === "generic"
             ? "bg-teal-100 text-teal-800"
-            : "bg-neutral-100 text-neutral-500"
+            : resolved.source === "sense"
+              ? "bg-sky-100 text-sky-800"
+              : "bg-neutral-100 text-neutral-500"
       }
       headword={resolved.word}
       insight={resolved.insight}
@@ -380,9 +385,10 @@ function DynamicInsight({
       onPick={onPick}
       isUsageExhausted={isUsageExhausted}
       emptyMessage={
-        // we/us/our が「具体的な人物を指す適切な用法」と確認された場合は、
-        // 解説文自体がその旨を説明しているため、汎用の空メッセージは表示しない。
-        resolved.isVaguePronoun === false
+        // we/us/our が「具体的な人物を指す適切な用法」と確認された場合や、
+        // 多義語の用法を説明している場合は、解説文自体がその旨を述べているため
+        // 汎用の空メッセージは表示しない。
+        resolved.isVaguePronoun === false || resolved.source === "sense"
           ? undefined
           : "この単語にはまだ言い換え候補がありません。"
       }
