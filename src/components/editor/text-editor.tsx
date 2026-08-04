@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -38,6 +39,7 @@ import {
 } from "@/lib/config";
 import { consumeRequest, useUsageLimit } from "@/lib/usage-store";
 import { useTextHistory } from "@/lib/use-text-history";
+import { useIsTouchDevice } from "@/lib/use-touch-device";
 import { Button } from "@/components/ui/button";
 import { WordToken } from "./word-token";
 import { IssuePanel, type IssuePanelTab } from "./issue-panel";
@@ -47,6 +49,9 @@ import { IssuePanel, type IssuePanelTab } from "./issue-panel";
 const JUMP_HIGHLIGHT_DURATION_MS = 1600;
 
 const MIN_HEIGHT = 224;
+
+// 『言い換えを探す』ボタンをエディタの内側に収めるときの左右の余白。
+const CHIP_EDGE_MARGIN = 8;
 
 // 入力中の単語（例: "policy" の途中の "polic"）を誤ってスペルミス判定
 // しないよう、入力が止まってからこの時間が経過するまでスペルチェックの
@@ -124,6 +129,8 @@ export function TextEditor() {
   // textarea とオーバーレイを含む相対配置のコンテナ。
   // 言い換えツールチップをこの中に absolute 配置し、ページスクロールに追従させる。
   const editorBoxRef = useRef<HTMLDivElement>(null);
+  // 『言い換えを探す』ボタン。実寸を測って画面内に収める補正に使う。
+  const paraphraseChipRef = useRef<HTMLButtonElement>(null);
   const jumpTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 直前に解析（事前スキャン）を実行した時刻。連打防止のクールダウン判定に使う。
   const lastAnalysisAtRef = useRef(0);
@@ -138,6 +145,9 @@ export function TextEditor() {
 
   const { remaining, isExhausted } = useUsageLimit();
   const isOverLength = text.length > MAX_TEXT_LENGTH;
+  // スマホ・タブレットではダブルタップにOS標準の選択メニューが割り込むため、
+  // 案内文と操作方法をシングルタップ向けに切り替える。
+  const isTouchDevice = useIsTouchDevice();
 
   // Undo/Redo で内容が入れ替わると単語の位置がずれるため、開いている
   // ポップオーバーは閉じる。
@@ -345,6 +355,24 @@ export function TextEditor() {
   const highlightCount = improvementItems.length;
   const typoCount = spellingItems.length;
 
+  // 『言い換えを探す』ボタンは単語の中央を基準に配置するため、行頭・行末の
+  // 単語ではエディタの外へはみ出して指で押せなくなる（特にスマホ幅）。
+  // 描画後に実寸を測り、エディタの内側へ収まるよう左位置を補正する。
+  // state を持たずDOMへ直接書き込むことで、再レンダリングを増やさない。
+  useLayoutEffect(() => {
+    const chip = paraphraseChipRef.current;
+    const container = editorBoxRef.current;
+    if (!chip || !container) return;
+
+    const half = chip.offsetWidth / 2;
+    const anchored = Number.parseFloat(chip.style.left);
+    if (!Number.isFinite(anchored)) return;
+
+    const min = half + CHIP_EDGE_MARGIN;
+    const max = container.clientWidth - half - CHIP_EDGE_MARGIN;
+    chip.style.left = `${Math.min(Math.max(anchored, min), Math.max(min, max))}px`;
+  });
+
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -453,16 +481,25 @@ export function TextEditor() {
   }
 
   /**
-   * textarea 内の選択が変わったときに呼ばれる。
-   * 「1つの単語だけが選択されている」かつ「その単語に指摘が無い」場合にだけ、
-   * 単語の近くに『言い換えを探す』ボタンを出す。ここでは通信は一切行わない。
+   * 『言い換えを探す』ボタンを出すかどうかを、現在のキャレット／選択範囲から判定する。
+   * 「1つの単語だけが対象になっている」かつ「その単語に指摘が無い」場合にだけ、
+   * 単語の近くにボタンを出す。ここでは通信は一切行わない。
+   *
+   * `allowCaretOnly` はタッチ端末用。ダブルタップするとOS標準の
+   * コピー/ペーストメニューが割り込むため、モバイルでは選択を作らない
+   * シングルタップ（＝キャレットを置いただけ）でもボタンを出せるようにする。
    */
-  function handleSelectionChange(event: SyntheticEvent<HTMLTextAreaElement>) {
-    const element = event.currentTarget;
+  function updateParaphrasePrompt(element: HTMLTextAreaElement, allowCaretOnly: boolean) {
     const { selectionStart, selectionEnd } = element;
 
-    // 選択が無い（カーソルを置いただけ）場合はボタンを出さない。
-    if (selectionStart === null || selectionEnd === null || selectionStart === selectionEnd) {
+    if (selectionStart === null || selectionEnd === null) {
+      setParaphrasePrompt(null);
+      return;
+    }
+
+    const isCaretOnly = selectionStart === selectionEnd;
+    // 選択が無い（カーソルを置いただけ）場合、デスクトップではボタンを出さない。
+    if (isCaretOnly && !allowCaretOnly) {
       setParaphrasePrompt(null);
       return;
     }
@@ -476,20 +513,32 @@ export function TextEditor() {
     while (from < to && isTrimmable(text[from])) from++;
     while (to > from && isTrimmable(text[to - 1])) to--;
 
-    if (from >= to) {
+    if (!isCaretOnly && from >= to) {
       setParaphrasePrompt(null);
       return;
     }
 
     // 選択範囲が1単語の内側に収まっているときだけ対象にする
     // （ダブルクリックするとその単語がちょうど選択される）。
+    // シングルタップの場合は、キャレットを含む単語を対象にする。
     const token = tokens.find(
       (candidate): candidate is Extract<Token, { type: "word" }> =>
-        candidate.type === "word" && candidate.start <= from && to <= candidate.end,
+        candidate.type === "word" &&
+        (isCaretOnly
+          ? candidate.start <= from && from <= candidate.end
+          : candidate.start <= from && to <= candidate.end),
     );
 
-    // 黄色・赤色の単語は従来どおりクリックで開けるため、ボタンは出さない。
-    if (!token || token.rule || token.isUnknownWord || token.isAiTypo) {
+    // 黄色・赤色の単語は従来どおりタップ/クリックで開けるため、ボタンは出さない。
+    // 記号トークン（"!!" など）も言い換えの対象外。
+    if (
+      !token ||
+      token.rule ||
+      token.isSymbol ||
+      token.isUnknownWord ||
+      token.isAiTypo ||
+      token.isAiStyle
+    ) {
       setParaphrasePrompt(null);
       return;
     }
@@ -513,6 +562,29 @@ export function TextEditor() {
       top: below ? top + wordRect.height : top,
       left: wordRect.left - containerRect.left + wordRect.width / 2,
       below,
+    });
+  }
+
+  /** 選択が変わるイベント（onSelect / onDoubleClick / onMouseUp）からの入口。 */
+  function handleSelectionChange(event: SyntheticEvent<HTMLTextAreaElement>) {
+    updateParaphrasePrompt(event.currentTarget, false);
+  }
+
+  /**
+   * タッチ端末で単語をシングルタップしたときの入口。
+   *
+   * モバイルでダブルタップすると、OS標準のコピー/ペーストメニューと選択ハンドルが
+   * 割り込んで言い換えボタンに触れられなくなる。そこでタッチ端末では、
+   * 選択を作らない1回のタップだけで言い換えボタンを出す。
+   * キャレット移動そのものはブラウザ標準のまま残るため、文字の編集操作は変わらない。
+   */
+  function handlePointerUp(event: ReactPointerEvent<HTMLTextAreaElement>) {
+    if (event.pointerType !== "touch") return;
+    // タップ直後はキャレット位置がまだ更新されていないことがあるため、
+    // 次のフレームで読み直す（合成イベントは再利用されるので ref から取り直す）。
+    requestAnimationFrame(() => {
+      const element = textareaRef.current;
+      if (element) updateParaphrasePrompt(element, true);
     });
   }
 
@@ -646,7 +718,9 @@ export function TextEditor() {
             </span>
             <span className="flex items-center gap-1.5">
               <Lightbulb className="h-4 w-4 text-amber-500" />
-              単語をダブルクリックすると言い換えを探せます
+              {isTouchDevice
+                ? "単語をタップすると言い換えを探せます"
+                : "単語をダブルクリックすると言い換えを探せます"}
             </span>
           </p>
           <div className="flex flex-wrap gap-2">
@@ -695,18 +769,27 @@ export function TextEditor() {
             // ダブルクリックとマウス操作の完了時にも同じ判定を走らせる。
             onDoubleClick={handleSelectionChange}
             onMouseUp={handleSelectionChange}
+            // タッチ端末ではシングルタップでも言い換えボタンを出す。
+            onPointerUp={handlePointerUp}
             onKeyDown={handleUndoRedoKeyDown}
             placeholder="ここに英文を入力または貼り付けしてください..."
             spellCheck={false}
             className={cn(
               SHARED_BOX_CLASSES,
-              "relative z-0 resize-none overflow-hidden border-neutral-200 bg-white text-transparent caret-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-teal-400 focus:ring-4 focus:ring-teal-100",
+              // touch-manipulation はダブルタップズームの待ち時間だけを無効化する。
+              // 文字入力・選択・コピー＆ペーストの挙動はブラウザ標準のまま残す。
+              "relative z-0 touch-manipulation resize-none overflow-hidden border-neutral-200 bg-white text-transparent caret-neutral-900 shadow-sm outline-none placeholder:text-neutral-400 focus:border-teal-400 focus:ring-4 focus:ring-teal-100",
             )}
           />
           <div
             className={cn(
               SHARED_BOX_CLASSES,
               "pointer-events-none absolute inset-0 z-10 border-transparent text-neutral-800",
+              // ハイライト単語を長押ししたときに、OS標準の選択メニュー
+              // （コピー/ペースト/共有）が出ないようにする。
+              // このレイヤーは表示専用で、本文の選択・コピーは下の textarea が担うため、
+              // 選択を無効にしても通常の編集操作には影響しない。
+              "[-webkit-touch-callout:none] select-none",
             )}
           >
             {text.length > 0 && renderTokenNodes()}
@@ -715,6 +798,7 @@ export function TextEditor() {
           {paraphrasePrompt && (
             <button
               type="button"
+              ref={paraphraseChipRef}
               // mousedown の既定動作を止めて textarea の選択を保ったまま
               // クリックを受け取る（選択が消えると位置の基準を失うため）。
               onMouseDown={(event) => event.preventDefault()}
@@ -723,12 +807,18 @@ export function TextEditor() {
                 "animate-popover absolute z-30 flex -translate-x-1/2 items-center gap-1 rounded-full",
                 "border border-teal-200 bg-white px-3 py-1.5 text-xs font-medium text-teal-700",
                 "shadow-lg transition-colors hover:border-teal-300 hover:bg-teal-50",
+                // 指でも押しやすいよう、タップ遅延と長押しメニューを無効化する。
+                "touch-manipulation select-none [-webkit-touch-callout:none]",
+                // 画面幅の狭い端末では、絶対配置の縮小規則により文字が
+                // 何行にも折り返されてボタンが縦に伸びてしまう。
+                // 内容ぴったりの幅（w-max）で1行に保ち、極端に長い場合だけ省略する。
+                "w-max max-w-[calc(100%-1rem)] whitespace-nowrap",
                 paraphrasePrompt.below ? "translate-y-2" : "-translate-y-[calc(100%+8px)]",
               )}
               style={{ top: paraphrasePrompt.top, left: paraphrasePrompt.left }}
             >
-              <Lightbulb className="h-3.5 w-3.5" />
-              「{paraphrasePrompt.word}」の言い換えを探す
+              <Lightbulb className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">「{paraphrasePrompt.word}」の言い換えを探す</span>
             </button>
           )}
         </div>

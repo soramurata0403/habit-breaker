@@ -99,6 +99,9 @@ export function WordToken({
             // padding/margin/border は一切持たせない: textarea 側の文字幅と
             // 完全に一致させるため（背景色・ring は box-shadow ベースでレイアウトに影響しない）。
             "pointer-events-auto m-0 rounded border-0 p-0 align-baseline transition-colors",
+            // タッチ端末で長押し・ダブルタップしたときに、OS標準の選択メニューや
+            // ダブルタップズームが割り込んでポップオーバーの操作を妨げないようにする。
+            "touch-manipulation select-none [-webkit-touch-callout:none]",
             isTypoFlagged
               ? cn(
                   "bg-red-100/80 underline decoration-red-500 decoration-2 decoration-wavy underline-offset-4 hover:bg-red-200/80",
